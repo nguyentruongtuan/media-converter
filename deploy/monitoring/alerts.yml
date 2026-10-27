@@ -1,0 +1,69 @@
+# Alert rules. Kept in sync with deploy/k8s/monitoring/prometheusrule.yaml.
+groups:
+  - name: media-converter
+    rules:
+      - alert: TranscodeJobsFailing
+        expr: sum(increase(transcoder_jobs_finished_total{outcome="failed"}[15m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} transcode jobs failed permanently in the last 15m"
+          runbook: docs/operations.md#failed-jobs
+      - alert: TranscodeFailureRateHigh
+        expr: |
+          sum(rate(transcoder_jobs_finished_total{outcome="failed"}[30m]))
+            / clamp_min(sum(rate(transcoder_jobs_finished_total{outcome=~"failed|completed"}[30m])), 1e-9) > 0.2
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 20% of transcode jobs are failing"
+          runbook: docs/operations.md#failed-jobs
+      - alert: DeadLetterGrowing
+        expr: delta(max(transcoder_dead_letter_size)[30m:]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "New entries in the transcode dead-letter list"
+          runbook: docs/operations.md#dead-letter
+      - alert: TranscodeQueueBacklog
+        expr: max(transcoder_queue_depth) > 20
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} jobs waiting for more than 15m; check KEDA scaling and MAX_CONCURRENT_JOBS"
+          runbook: docs/operations.md#queue-backlog
+      - alert: TranscodeQueueStalled
+        expr: max(transcoder_queue_depth) > 0 and sum(transcoder_jobs_active or vector(0)) == 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Jobs are queued but no worker is transcoding"
+          runbook: docs/operations.md#queue-backlog
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "API 5xx rate above 5%"
+      - alert: MinioStorageLow
+        expr: minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes < 0.15
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "MinIO has {{ $value | humanizePercentage }} usable capacity left"
+          runbook: docs/operations.md#storage-capacity
+      - alert: MinioStorageCritical
+        expr: minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes < 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "MinIO has {{ $value | humanizePercentage }} usable capacity left; uploads will fail soon"
+          runbook: docs/operations.md#storage-capacity
+      - alert: PersistentVolumeAlmostFull
+        expr: |
+          kubelet_volume_stats_available_bytes{namespace="media-converter"}
+            / kubelet_volume_stats_capacity_bytes{namespace="media-converter"} < 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "PVC {{ $labels.persistentvolumeclaim }} is over 90% full"
+          runbook: docs/operations.md#storage-capacity

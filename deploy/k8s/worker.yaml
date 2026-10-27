@@ -1,0 +1,68 @@
+# Replica count is owned by KEDA (keda.yaml). Each pod runs exactly one transcode at a time.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcode-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: transcode-worker }
+  template:
+    metadata:
+      labels: { app: transcode-worker }
+    spec:
+      # SIGTERM triggers Celery's warm shutdown: the current job is allowed to finish. A job still
+      # running when the grace period ends is killed; its message is redelivered (acks_late) and the
+      # expired lease lets another worker claim and redo it.
+      terminationGracePeriodSeconds: 3600
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: media-converter
+          args: ["celery", "-A", "app.worker.celery_app", "worker",
+                 "-Q", "transcode", "--pool=solo", "--concurrency=1", "--prefetch-multiplier=1",
+                 "--without-gossip", "--without-mingle", "-n", "worker@%h", "--loglevel=INFO"]
+          envFrom:
+            - configMapRef: { name: media-converter-config }
+            - secretRef: { name: media-converter-secrets }
+          ports:
+            - containerPort: 9101
+              name: metrics
+          # libx264 uses all available cores; the limit bounds noisy-neighbour impact.
+          resources:
+            requests: { cpu: "2", memory: 2Gi, ephemeral-storage: 20Gi }
+            limits: { cpu: "4", memory: 6Gi, ephemeral-storage: 60Gi }
+          # A background thread touches this file every 15s, even while FFmpeg is busy.
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-alive') > 120)"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-alive') > 60)"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Temporary transcoding space: source + all renditions + HLS segments for one job.
+        # Use a generic ephemeral volume on a fast StorageClass instead if node disks are small.
+        - name: scratch
+          emptyDir:
+            sizeLimit: 50Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HLS Player</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fafafa; --fg: #1a1a1a; --muted: #666; --border: #ddd; --accent: #2457d6; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #eee; --muted: #999; --border: #333; --accent: #7aa2ff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    input { flex: 1 1 320px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; }
+    button, select { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+    select { background: transparent; color: inherit; }
+    video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .err { color: #d33; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Adaptive HLS player</h1>
+  <form id="f">
+    <input id="src" type="url" placeholder="https://media.example.com/media/&lt;video&gt;/&lt;job&gt;/hls/master.m3u8" required>
+    <button>Play</button>
+  </form>
+  <video id="v" controls playsinline></video>
+  <div class="row">
+    <label>Quality <select id="q"><option value="-1">Auto</option></select></label>
+    <span id="engine"></span>
+    <span id="level"></span>
+    <span id="bw"></span>
+    <span id="msg" class="err"></span>
+  </div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script>
+  const video = document.getElementById("v");
+  const quality = document.getElementById("q");
+  const status = (id, text) => (document.getElementById(id).textContent = text);
+  let hls;
+
+  function play(url) {
+    status("msg", "");
+    if (hls) { hls.destroy(); hls = null; }
+    quality.length = 1;
+    // Prefer MSE (hls.js) where available: Chrome, Firefox, Edge, Android. Safari and iOS play HLS natively.
+    if (window.Hls && Hls.isSupported()) {
+      status("engine", "Engine: hls.js " + Hls.version);
+      hls = new Hls({ capLevelToPlayerSize: true });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        data.levels.forEach((l, i) => quality.add(new Option(`${l.height}p (${Math.round(l.bitrate / 1000)} kbps)`, i)));
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => status("level", "Playing: " + hls.levels[d.level].height + "p"));
+      hls.on(Hls.Events.FRAG_LOADED, () => status("bw", "Est. bandwidth: " + Math.round(hls.bandwidthEstimate / 1000) + " kbps"));
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        if (!d.fatal) return;
+        status("msg", "Playback error: " + d.details);
+        if (d.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+        else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      status("engine", "Engine: native HLS");
+      quality.disabled = true;
+      video.src = url;
+      video.play().catch(() => {});
+    } else {
+      status("msg", "This browser cannot play HLS.");
+    }
+  }
+
+  quality.onchange = () => { if (hls) hls.currentLevel = Number(quality.value); };
+  document.getElementById("f").onsubmit = (e) => {
+    e.preventDefault();
+    const url = document.getElementById("src").value;
+    history.replaceState(null, "", "?src=" + encodeURIComponent(url));
+    play(url);
+  };
+  const initial = new URLSearchParams(location.search).get("src");
+  if (initial) { document.getElementById("src").value = initial; play(initial); }
+</script>
+</body>
+</html>

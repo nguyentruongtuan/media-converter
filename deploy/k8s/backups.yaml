@@ -1,0 +1,107 @@
+# Nightly Postgres dumps into MinIO, and nightly replication of MinIO buckets to an off-cluster
+# S3-compatible target. Configure the target in the backup-remote secret (rclone env config).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backup-remote
+type: Opaque
+stringData:
+  RCLONE_CONFIG_OFFSITE_TYPE: s3
+  RCLONE_CONFIG_OFFSITE_PROVIDER: Other
+  RCLONE_CONFIG_OFFSITE_ENDPOINT: https://backup.example.com
+  RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: CHANGE_ME
+  RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: CHANGE_ME
+  OFFSITE_BUCKET: media-converter-backup
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "15 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          initContainers:
+            - name: dump
+              image: postgres:16-alpine
+              command: ["sh", "-c", "pg_dump -h postgres -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -Fc -f /backup/transcoder-$(date -u +%Y%m%dT%H%M%SZ).dump"]
+              env:
+                - name: POSTGRES_USER
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: POSTGRES_USER } }
+                - name: POSTGRES_DB
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: POSTGRES_DB } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: POSTGRES_PASSWORD } }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+          containers:
+            - name: upload
+              image: rclone/rclone:1.68
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  rclone mkdir minio:backups &&
+                  rclone copy /backup minio:backups/postgres/ &&
+                  rclone delete --min-age 14d minio:backups/postgres/ &&
+                  rclone copy /backup offsite:$OFFSITE_BUCKET/postgres/
+              env:
+                - { name: RCLONE_CONFIG_MINIO_TYPE, value: s3 }
+                - { name: RCLONE_CONFIG_MINIO_PROVIDER, value: Minio }
+                - { name: RCLONE_CONFIG_MINIO_ENDPOINT, value: "http://minio:9000" }
+                - name: RCLONE_CONFIG_MINIO_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: MINIO_ACCESS_KEY } }
+                - name: RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: MINIO_SECRET_KEY } }
+              envFrom:
+                - secretRef: { name: backup-remote }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+          volumes:
+            - name: backup
+              emptyDir: {}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: object-storage-backup
+spec:
+  schedule: "45 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sync
+              image: rclone/rclone:1.68
+              command: ["sh", "-c"]
+              # Originals are irreplaceable. Outputs can be regenerated, but copying them avoids a
+              # full re-transcode after a disaster; drop the second line to save backup space.
+              args:
+                - >-
+                  rclone sync --fast-list --transfers 8 minio:videos-source offsite:$OFFSITE_BUCKET/videos-source &&
+                  rclone sync --fast-list --transfers 8 minio:videos-output offsite:$OFFSITE_BUCKET/videos-output
+              env:
+                - { name: RCLONE_CONFIG_MINIO_TYPE, value: s3 }
+                - { name: RCLONE_CONFIG_MINIO_PROVIDER, value: Minio }
+                - { name: RCLONE_CONFIG_MINIO_ENDPOINT, value: "http://minio:9000" }
+                - name: RCLONE_CONFIG_MINIO_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: MINIO_ACCESS_KEY } }
+                - name: RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: media-converter-secrets, key: MINIO_SECRET_KEY } }
+              envFrom:
+                - secretRef: { name: backup-remote }
+              resources:
+                requests: { cpu: 250m, memory: 256Mi }
+                limits: { cpu: "2", memory: 1Gi }

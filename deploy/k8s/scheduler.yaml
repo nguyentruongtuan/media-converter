@@ -1,0 +1,49 @@
+# Celery beat plus a small worker for maintenance tasks (stale-job recovery). Exactly one replica,
+# otherwise the schedule would fire once per replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: scheduler }
+  template:
+    metadata:
+      labels: { app: scheduler }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: scheduler
+          image: media-converter
+          args: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "-Q", "maintenance",
+                 "--pool=solo", "-n", "scheduler@%h", "--schedule=/tmp/celerybeat-schedule", "--loglevel=INFO"]
+          envFrom:
+            - configMapRef: { name: media-converter-config }
+            - secretRef: { name: media-converter-secrets }
+          env:
+            - name: WORKER_METRICS_PORT
+              value: "9102"
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-alive') > 120)"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

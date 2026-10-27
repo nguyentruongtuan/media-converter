@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: media
+  labels: { app: media }
+spec:
+  selector: { app: media }
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: media }
+  template:
+    metadata:
+      labels: { app: media }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: nginx
+          image: media-converter-nginx
+          env:
+            - name: MINIO_UPSTREAM
+              value: minio.media-converter.svc.cluster.local:9000
+            - name: OUTPUT_BUCKET
+              valueFrom: { configMapKeyRef: { name: media-converter-config, key: OUTPUT_BUCKET } }
+            - name: NGINX_RESOLVER
+              value: kube-dns.kube-system.svc.cluster.local
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: cache
+          emptyDir:
+            sizeLimit: 12Gi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: media
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: media }

@@ -1,0 +1,44 @@
+# Requires KEDA (scripts/install-keda.sh). Scales transcode workers on queued + in-flight jobs.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: transcode-worker
+spec:
+  scaleTargetRef:
+    name: transcode-worker
+  pollingInterval: 10
+  cooldownPeriod: 300
+  minReplicaCount: 0
+  # Upper bound on worker pods; MAX_CONCURRENT_JOBS (configmap) caps concurrent transcodes cluster-wide.
+  maxReplicaCount: 10
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - { type: Pods, value: 4, periodSeconds: 30 }
+        # Scale down slowly: a removed pod gets terminationGracePeriodSeconds to finish its job.
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies:
+            - { type: Pods, value: 1, periodSeconds: 120 }
+  triggers:
+    # Queue length alone: one pod per waiting message. Works without Prometheus and handles 0 -> 1.
+    - type: redis
+      metadata:
+        address: redis.media-converter.svc.cluster.local:6379
+        listName: transcode
+        listLength: "1"
+        activationListLength: "0"
+    # Queued + in-flight. Celery removes a message from the list once a worker takes it, so without
+    # this KEDA would scale away pods that are busy transcoding.
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-operated.monitoring.svc.cluster.local:9090
+        query: >-
+          sum(transcoder_jobs_active{namespace="media-converter"} or vector(0))
+          + max(transcoder_queue_depth{namespace="media-converter"} or vector(0))
+        threshold: "1"
+        activationThreshold: "0"
+        ignoreNullValues: "true"

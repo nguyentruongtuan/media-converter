@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-converter-config
+data:
+  ENVIRONMENT: production
+  LOG_LEVEL: INFO
+  LOG_JSON: "true"
+  REDIS_URL: redis://redis:6379/0
+  MINIO_ENDPOINT: minio:9000
+  MINIO_SECURE: "false"
+  # Host clients use for presigned uploads (exposed via the Ingress below).
+  MINIO_PUBLIC_ENDPOINT: s3.example.com
+  MINIO_PUBLIC_SECURE: "true"
+  SOURCE_BUCKET: videos-source
+  OUTPUT_BUCKET: videos-output
+  OUTPUT_BUCKET_PUBLIC_READ: "true"
+  PUBLIC_MEDIA_BASE_URL: https://media.example.com/media
+  AUTH_ENABLED: "true"
+  MAX_UPLOAD_BYTES: "10737418240"
+  MAX_VIDEO_DURATION_SECONDS: "14400"
+  X264_PRESET: veryfast
+  DEFAULT_CRF: "23"
+  HLS_SEGMENT_SECONDS: "6"
+  WORK_DIR: /scratch
+  JOB_MAX_ATTEMPTS: "3"
+  JOB_LEASE_SECONDS: "300"
+  JOB_HEARTBEAT_SECONDS: "30"
+  JOB_TIMEOUT_SECONDS: "14400"
+  # Cluster-wide cap enforced in Redis, independent of how many worker pods KEDA starts.
+  MAX_CONCURRENT_JOBS: "10"
+  RECOVERY_INTERVAL_SECONDS: "60"
+  STALE_PENDING_SECONDS: "900"

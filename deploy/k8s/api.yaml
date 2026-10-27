@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: { app: api }
+spec:
+  selector: { app: api }
+  ports:
+    - name: http
+      port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: api }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      # Migrations are serialised with a Postgres advisory lock, so every replica can run them safely.
+      initContainers:
+        - name: migrate
+          image: media-converter
+          command: ["sh", "-c", "alembic upgrade head && python -m app.cli init-storage"]
+          envFrom:
+            - configMapRef: { name: media-converter-config }
+            - secretRef: { name: media-converter-secrets }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      containers:
+        - name: api
+          image: media-converter
+          # One process per pod keeps Prometheus metrics in a single registry; scale with replicas (HPA).
+          args: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+                 "--proxy-headers", "--forwarded-allow-ips", "*"]
+          envFrom:
+            - configMapRef: { name: media-converter-config }
+            - secretRef: { name: media-converter-secrets }
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: api }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e '.[dev]'
+      - run: ruff check app tests alembic scripts
+      - run: ruff format --check app tests alembic scripts
+      - run: python scripts/render_prometheusrule.py --check
+      - run: pytest -q
+
+  ffmpeg-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target test -t media-converter:test .
+      - run: docker run --rm media-converter:test pytest -q -p no:cacheprovider
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Kubernetes manifests
+        run: |
+          (kubectl kustomize deploy/k8s; echo ---; kubectl kustomize deploy/monitoring) \
+            | docker run -i --rm ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [lint-and-unit]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait
+      - run: make sample SAMPLE=/tmp/sample.mp4
+      - run: python3 scripts/e2e.py /tmp/sample.mp4
+      - run: make chaos SAMPLE=/tmp/sample.mp4
+        env: { JOB_LEASE_SECONDS: "30", JOB_HEARTBEAT_SECONDS: "5", RECOVERY_INTERVAL_SECONDS: "10" }
+      - if: failure()
+        run: docker compose logs --no-color
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint-and-unit, ffmpeg-integration, manifests, e2e]
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: make push REGISTRY=$REGISTRY VERSION=${GITHUB_REF_NAME#v}

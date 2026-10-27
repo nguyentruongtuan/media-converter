@@ -1,0 +1,40 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels: { app: api }
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: transcode-worker
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels: { app: transcode-worker }
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: minio
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels: { app: minio }
+  endpoints:
+    - port: api
+      path: /minio/v2/metrics/cluster
+      interval: 30s

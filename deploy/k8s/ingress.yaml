@@ -1,0 +1,66 @@
+# Requires ingress-nginx and cert-manager with a ClusterIssuer named letsencrypt-prod.
+# Replace example.com hosts (also in configmap.yaml and minio.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 1m
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.example.com]
+      secretName: api-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          # /metrics is deliberately not exposed publicly.
+          - { path: /v1, pathType: Prefix, backend: { service: { name: api, port: { number: 8000 } } } }
+          - { path: /health, pathType: Prefix, backend: { service: { name: api, port: { number: 8000 } } } }
+          - { path: /docs, pathType: Prefix, backend: { service: { name: api, port: { number: 8000 } } } }
+          - { path: /openapi.json, pathType: Exact, backend: { service: { name: api, port: { number: 8000 } } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [media.example.com]
+      secretName: media-tls
+  rules:
+    - host: media.example.com
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: media, port: { number: 8080 } } } }
+---
+# Direct-to-MinIO uploads with presigned URLs. Size limits are enforced by the presigned POST policy.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: s3
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [s3.example.com]
+      secretName: s3-tls
+  rules:
+    - host: s3.example.com
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: minio, port: { number: 9000 } } } }
