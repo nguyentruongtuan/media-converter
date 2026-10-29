@@ -1,0 +1,97 @@
+{{- if .Values.minio.enabled }}
+{{- $name := include "mc.name" (list . "minio") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+    {{- include "mc.selectorLabels" (list . "minio") | nindent 4 }}
+spec:
+  selector:
+    {{- include "mc.selectorLabels" (list . "minio") | nindent 4 }}
+  ports:
+    - name: api
+      port: {{ .Values.minio.service.apiPort }}
+    - name: console
+      port: {{ .Values.minio.service.consolePort }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mc.labels" . | nindent 8 }}
+        {{- include "mc.selectorLabels" (list . "minio") | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.minio.service.apiPort | quote }}
+        prometheus.io/path: /minio/v2/metrics/cluster
+    spec:
+      {{- include "mc.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: {{ include "mc.image.minio" . | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["server", "/data", "--console-address", ":{{ .Values.minio.service.consolePort }}"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: {{ include "mc.secretName" . }}, key: MINIO_ROOT_USER } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "mc.secretName" . }}, key: MINIO_ROOT_PASSWORD } }
+            - name: MINIO_PROMETHEUS_AUTH_TYPE
+              value: public
+            # Presigned URLs are signed for the public host; MinIO must accept it.
+            - name: MINIO_SERVER_URL
+              value: {{ printf "https://%s" .Values.hosts.s3 | quote }}
+          ports:
+            - containerPort: {{ .Values.minio.service.apiPort }}
+              name: api
+            - containerPort: {{ .Values.minio.service.consolePort }}
+              name: console
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: api }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: api }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- with .Values.minio.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.minio.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.minio.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.minio.persistence.size }}
+{{- end }}

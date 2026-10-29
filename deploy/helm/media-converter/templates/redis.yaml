@@ -1,0 +1,80 @@
+{{- if .Values.redis.enabled }}
+{{- $name := include "mc.name" (list . "redis") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+    {{- include "mc.selectorLabels" (list . "redis") | nindent 4 }}
+spec:
+  selector:
+    {{- include "mc.selectorLabels" (list . "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mc.labels" . | nindent 8 }}
+        {{- include "mc.selectorLabels" (list . "redis") | nindent 8 }}
+    spec:
+      {{- include "mc.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: {{ .Values.images.redis | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args:
+            {{- toYaml .Values.redis.args | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.redis.service.port }}
+              name: redis
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- with .Values.redis.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.redis.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.redis.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size }}
+{{- end }}

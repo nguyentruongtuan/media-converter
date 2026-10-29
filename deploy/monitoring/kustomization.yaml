@@ -1,12 +1,13 @@
-# Monitoring add-on. Requires the Prometheus Operator CRDs (e.g. kube-prometheus-stack) and a
-# Grafana sidecar that loads ConfigMaps labelled grafana_dashboard=1.
+# Alert rules and dashboard. Requires the Prometheus Operator CRDs (e.g. kube-prometheus-stack) and
+# a Grafana sidecar that loads ConfigMaps labelled grafana_dashboard=1.
 #   kubectl apply -k deploy/monitoring
+# The ServiceMonitors and PodMonitor that go with these come from the Helm chart
+# (--set monitoring.enabled=true), because their selectors follow the release's object names.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: media-converter
 
 resources:
-  - monitors.yaml
   - prometheusrule.yaml
 
 configMapGenerator:

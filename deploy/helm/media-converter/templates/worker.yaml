@@ -1,20 +1,35 @@
-# Replica count is owned by KEDA (keda.yaml). Each pod runs exactly one transcode at a time.
+{{- $name := include "mc.name" (list . "transcode-worker") }}
+# Replica count is owned by KEDA (see keda.yaml) when keda.enabled. Each pod runs exactly one
+# transcode at a time.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: transcode-worker
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  {{- if not .Values.keda.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
   selector:
-    matchLabels: { app: transcode-worker }
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "transcode-worker") | nindent 6 }}
   template:
     metadata:
-      labels: { app: transcode-worker }
+      labels:
+        {{- include "mc.labels" . | nindent 8 }}
+        {{- include "mc.selectorLabels" (list . "transcode-worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      {{- include "mc.imagePullSecrets" . | nindent 6 }}
       # SIGTERM triggers Celery's warm shutdown: the current job is allowed to finish. A job still
       # running when the grace period ends is killed; its message is redelivered (acks_late) and the
       # expired lease lets another worker claim and redo it.
-      terminationGracePeriodSeconds: 3600
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -22,20 +37,20 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
-          image: media-converter
+          image: {{ include "mc.image.app" . | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
           args: ["celery", "-A", "app.worker.celery_app", "worker",
                  "-Q", "transcode", "--pool=solo", "--concurrency=1", "--prefetch-multiplier=1",
                  "--without-gossip", "--without-mingle", "-n", "worker@%h", "--loglevel=INFO"]
-          envFrom:
-            - configMapRef: { name: media-converter-config }
-            - secretRef: { name: media-converter-secrets }
+          {{- include "mc.appEnvFrom" . | nindent 10 }}
+          env:
+            - name: WORKER_METRICS_PORT
+              value: {{ .Values.worker.metricsPort | quote }}
           ports:
-            - containerPort: 9101
+            - containerPort: {{ .Values.worker.metricsPort }}
               name: metrics
-          # libx264 uses all available cores; the limit bounds noisy-neighbour impact.
           resources:
-            requests: { cpu: "2", memory: 2Gi, ephemeral-storage: 20Gi }
-            limits: { cpu: "4", memory: 6Gi, ephemeral-storage: 60Gi }
+            {{- toYaml .Values.worker.resources | nindent 12 }}
           # A background thread touches this file every 15s, even while FFmpeg is busy.
           livenessProbe:
             exec:
@@ -54,7 +69,7 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - name: scratch
-              mountPath: /scratch
+              mountPath: {{ .Values.config.WORK_DIR }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -62,7 +77,19 @@ spec:
         # Use a generic ephemeral volume on a fast StorageClass instead if node disks are small.
         - name: scratch
           emptyDir:
-            sizeLimit: 50Gi
+            sizeLimit: {{ .Values.worker.scratch.sizeLimit }}
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

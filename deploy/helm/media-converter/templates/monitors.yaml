@@ -1,0 +1,52 @@
+{{- if .Values.monitoring.enabled }}
+# Prometheus Operator scrape configs. Needs the kube-prometheus-stack CRDs. The alert rules and the
+# Grafana dashboard that go with these live in deploy/monitoring (kubectl apply -k deploy/monitoring).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mc.name" (list . "api") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.releaseLabel }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "mc.name" (list . "transcode-worker") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.releaseLabel }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "transcode-worker") | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+{{- if .Values.minio.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mc.name" (list . "minio") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.releaseLabel }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "minio") | nindent 6 }}
+  endpoints:
+    - port: api
+      path: /minio/v2/metrics/cluster
+      interval: 30s
+{{- end }}
+{{- end }}

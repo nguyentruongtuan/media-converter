@@ -30,9 +30,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/media-converter
       - name: Validate Kubernetes manifests
         run: |
-          (kubectl kustomize deploy/k8s; echo ---; kubectl kustomize deploy/monitoring) \
+          (helm template media-converter deploy/helm/media-converter \
+               --namespace media-converter --set namespace.create=true --set monitoring.enabled=true; \
+           echo ---; kubectl kustomize deploy/monitoring) \
             | docker run -i --rm ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary \
                 -schema-location default \
                 -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -

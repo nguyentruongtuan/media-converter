@@ -108,8 +108,8 @@ videos-output/<video-id>/<job-id>/
 app/            FastAPI app, Celery worker, services (ffprobe, ffmpeg, hls, transcoder, jobs, storage)
 alembic/        Database migrations
 tests/          Unit, API and FFmpeg integration tests; tests/load (Locust)
-deploy/k8s/     Kustomize base: namespace, config, Postgres, Redis, MinIO, API, workers, NGINX, Ingress, KEDA, backups
-deploy/monitoring/  Prometheus/Grafana for Compose + ServiceMonitors, PrometheusRule, dashboard for Kubernetes
+deploy/helm/     Helm chart: config, Postgres, Redis, MinIO, API, workers, NGINX, Ingress, KEDA, backups, monitors
+deploy/monitoring/  Prometheus/Grafana for Compose + PrometheusRule and dashboard for Kubernetes
 deploy/nginx/   Media edge image (MIME types, CORS, range caching) + player/
 deploy/minio/   MinIO built from source
 scripts/        e2e smoke test, chaos/recovery test, KEDA install, secret generation

@@ -69,7 +69,7 @@ Client -> FastAPI -> PostgreSQL (metadata)
 
 ## Phase 7 — Kubernetes Deployment
 
-Manifests in `deploy/k8s` are written and schema-validated (kubeconform), not yet applied to a cluster.
+The Helm chart in `deploy/helm/media-converter` is written and schema-validated (kubeconform), not yet applied to a cluster.
 
 - [x] Create dedicated Kubernetes namespace
 - [x] Create ConfigMaps and Secrets
@@ -84,7 +84,7 @@ Manifests in `deploy/k8s` are written and schema-validated (kubeconform), not ye
 - [x] Configure temporary transcoding disk space
 
 ## Phase 8 — Autoscaling & Reliability
-- [x] Install and configure KEDA — scripts/install-keda.sh + deploy/k8s/keda.yaml (not yet applied to a cluster)
+- [x] Install and configure KEDA — scripts/install-keda.sh + the chart's ScaledObject (not yet applied to a cluster)
 - [x] Configure Redis queue-based worker scaling
 - [x] Set worker concurrency limits
 - [x] Configure graceful worker shutdown

@@ -1,8 +1,12 @@
 REGISTRY ?= registry.example.com
 VERSION ?= 0.1.0
+CHART ?= deploy/helm/media-converter
+RELEASE ?= media-converter
+NAMESPACE ?= media-converter
+HELM_ARGS ?=
 SAMPLE ?= /tmp/sample.mp4
 
-.PHONY: install test test-docker lint up down logs sample e2e chaos images push deploy deploy-monitoring
+.PHONY: install test test-docker lint up down logs sample e2e chaos images push deploy deploy-monitoring helm-lint
 
 install:
 	python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
@@ -18,6 +22,9 @@ lint:
 	.venv/bin/ruff check app tests alembic scripts
 	.venv/bin/ruff format --check app tests alembic scripts
 	python3 scripts/render_prometheusrule.py --check
+
+helm-lint:
+	helm lint $(CHART)
 
 up:
 	docker compose up -d --build
@@ -51,7 +58,12 @@ push: images
 	docker push $(REGISTRY)/media-converter-minio:RELEASE.2025-04-22T22-12-26Z
 
 deploy:
-	kubectl apply -k deploy/k8s
+	helm upgrade --install $(RELEASE) $(CHART) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--set images.registry=$(REGISTRY) \
+		--set images.app.tag=$(VERSION) \
+		--set images.nginx.tag=$(VERSION) \
+		$(HELM_ARGS)
 
 deploy-monitoring:
 	kubectl apply -k deploy/monitoring

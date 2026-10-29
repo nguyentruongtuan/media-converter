@@ -5,24 +5,35 @@
 Prerequisites: a cluster with a default StorageClass, ingress-nginx, cert-manager (ClusterIssuer
 `letsencrypt-prod`), KEDA, and optionally kube-prometheus-stack.
 
+Everything is one Helm release (`deploy/helm/media-converter`). Keep per-environment settings in
+your own values file; the table in the chart's README lists the values worth setting.
+
 1. **Images.** Build and push the three images:
    ```bash
    make push REGISTRY=registry.example.com VERSION=0.1.0
    ```
-   Update `images:` in `deploy/k8s/kustomization.yaml` to match.
-2. **Hostnames.** Replace `example.com` in `deploy/k8s/configmap.yaml` (`MINIO_PUBLIC_ENDPOINT`,
-   `PUBLIC_MEDIA_BASE_URL`), `deploy/k8s/minio.yaml` (`MINIO_SERVER_URL`) and `deploy/k8s/ingress.yaml`.
-   Three hosts: `api.` (FastAPI), `media.` (NGINX edge and player), `s3.` (presigned uploads to MinIO).
-3. **Secrets.** Never apply `secrets.yaml` as is:
+   `make deploy` passes the same `REGISTRY`/`VERSION` to the chart as `images.registry` and
+   `images.app.tag` / `images.nginx.tag`.
+2. **Hostnames.** Set `hosts.api`, `hosts.media` and `hosts.s3`; they drive the Ingresses,
+   `MINIO_SERVER_URL`, `MINIO_PUBLIC_ENDPOINT` and `PUBLIC_MEDIA_BASE_URL`. Three hosts: `api.`
+   (FastAPI), `media.` (NGINX edge and player), `s3.` (presigned uploads to MinIO).
+3. **Secrets.** Never ship the `CHANGE_ME` defaults:
    ```bash
-   scripts/generate-secrets.sh > /tmp/secrets.yaml   # prints the admin API key on stderr
+   scripts/generate-secrets.sh | kubectl apply -n media-converter -f -   # admin API key on stderr
    ```
-   Seal it (Sealed Secrets / SOPS / External Secrets) and remove `secrets.yaml` from the kustomization,
-   or apply it directly for a first test. Fill in `backup-remote` in `backups.yaml` too.
+   Then install with `--set secrets.create=false --set secrets.existingSecret=media-converter-secrets`
+   (or seal the Secret with Sealed Secrets / SOPS / External Secrets). Do the same for the backup
+   target under `backups.offsite`.
 4. **KEDA.** `scripts/install-keda.sh`
-5. **Deploy.** `kubectl apply -k deploy/k8s`, then `kubectl apply -k deploy/monitoring` if the
-   Prometheus Operator is installed. If Prometheus is not at
-   `prometheus-operated.monitoring.svc:9090`, edit the `prometheus` trigger in `keda.yaml`.
+5. **Deploy.**
+   ```bash
+   make deploy REGISTRY=registry.example.com VERSION=0.1.0 \
+     HELM_ARGS='--values prod-values.yaml'
+   kubectl apply -k deploy/monitoring   # alert rules + dashboard, if the Prometheus Operator is there
+   ```
+   With the Prometheus Operator installed, add `--set monitoring.enabled=true` for the scrape
+   configs. If Prometheus is not at `prometheus-operated.monitoring.svc:9090`, set
+   `keda.prometheus.serverAddress`.
 6. **Verify.**
    ```bash
    kubectl -n media-converter get pods
@@ -50,12 +61,12 @@ takes it). Scale-down is limited to one pod every two minutes after a 10-minute 
 - Per pod: one transcode (`--pool=solo --concurrency=1 --prefetch-multiplier=1`).
 - Cluster-wide: `MAX_CONCURRENT_JOBS` (Redis-backed slot leases). Workers that cannot get a slot
   re-queue the job after `CONCURRENCY_RETRY_SECONDS` without consuming an attempt.
-- Ceiling on pods: `maxReplicaCount` in `keda.yaml`. Keep it ≥ `MAX_CONCURRENT_JOBS`.
+- Ceiling on pods: `keda.maxReplicaCount`. Keep it ≥ `MAX_CONCURRENT_JOBS` (`config.MAX_CONCURRENT_JOBS`).
 
 **Scratch disk.** Each job needs roughly `source size × DISK_SPACE_FACTOR` (default 4) of scratch space
 for the source, MP4 renditions and HLS segments. The worker checks free space before starting and
-fails the attempt (retried) when there is not enough. Raise the `scratch` `sizeLimit` and the
-`ephemeral-storage` request for long or high-bitrate sources.
+fails the attempt (retried) when there is not enough. Raise `worker.scratch.sizeLimit` and the
+`ephemeral-storage` request in `worker.resources` for long or high-bitrate sources.
 
 ## Job reliability model
 
@@ -167,7 +178,7 @@ Test the restore procedure on a scratch namespace at least quarterly.
 
 1. CI green on `main` (lint, unit, FFmpeg integration, manifest validation, Compose e2e + chaos).
 2. Tag `vX.Y.Z`; the release job pushes images to GHCR.
-3. Bump image tags in `deploy/k8s/kustomization.yaml`, `kubectl apply -k deploy/k8s`.
+3. `make deploy VERSION=X.Y.Z` (rolls the release forward; `helm rollback` to undo).
 4. Run `scripts/e2e.py` against production and play the result on iOS Safari, Android Chrome and a
    desktop browser (see docs/testing.md).
 5. Watch the Grafana dashboard and alerts for an hour.

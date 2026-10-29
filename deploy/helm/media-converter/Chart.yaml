@@ -1,0 +1,8 @@
+apiVersion: v2
+name: media-converter
+description: Video transcoding service — API, Celery transcode workers, scheduler, NGINX media edge, Postgres, Redis and MinIO.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords: [video, transcoding, ffmpeg, celery]
