@@ -121,60 +121,37 @@ bodies over 100 MB, which blocks larger uploads through `s3.example.com`.
 
 ### Let's Encrypt certificates for another proxy
 
-Caddy needs none of this. For a proxy that does not get its own certificates, such as NGINX,
-`scripts/letsencrypt.sh` requests one certificate covering all the domains, using certbot in Docker. Run it
-on the server, as root, once DNS points at the server and port 80 is reachable from the internet. It reads
-the domains from `.env`, or takes them as `-d media.example.com -d api.example.com -d s3.example.com`.
-Running it accepts the Let's Encrypt subscriber agreement.
+Caddy needs none of this. To use NGINX instead, install it on the server and set the addresses in `.env` as
+above. `scripts/letsencrypt.sh` then requests one certificate covering all the domains, using certbot in
+Docker, and configures NGINX to use it. Run it as root, once DNS points at the server and port 80 is reachable
+from the internet. Running it accepts the Let's Encrypt subscriber agreement.
 
 Try `--staging` first, because repeated failures against production hit a rate limit:
 
 ```bash
-sudo scripts/letsencrypt.sh issue --email you@example.com --staging
+sudo scripts/letsencrypt.sh issue --email you@example.com --nginx --staging
 ```
+
+Browsers do not trust staging certificates, so expect a warning. If the domains respond, get the real one:
 
 ```bash
-sudo scripts/letsencrypt.sh issue --email you@example.com
+sudo scripts/letsencrypt.sh issue --email you@example.com --nginx
 ```
 
-The certificate is written to `/etc/letsencrypt/live/media-converter/`. Staging certificates are not trusted
-by browsers, so they go to `media-converter-staging/` and never replace a production one. This NGINX config
-uses the certificate, and meets the `Host` and body size requirements above:
+The certificate is written to `/etc/letsencrypt/live/media-converter/`, or `media-converter-staging/` for
+staging, so a staging certificate never replaces a production one. The site is written to
+`/etc/nginx/conf.d/media-converter.conf`, and meets the `Host` and body size requirements above. If `nginx -t`
+rejects it, the previous config is put back. NGINX stops while certbot runs. If it is not managed by systemd,
+set `PROXY_STOP_CMD` and `PROXY_START_CMD` to the commands that stop and start it.
 
-```nginx
-map $host $upstream_port {
-	media.example.com 8080;
-	api.example.com 8000;
-	s3.example.com 9000;
-}
-server {
-	listen 80;
-	server_name media.example.com api.example.com s3.example.com;
-	return 301 https://$host$request_uri;
-}
-server {
-	listen 443 ssl;
-	server_name media.example.com api.example.com s3.example.com;
-	ssl_certificate /etc/letsencrypt/live/media-converter/fullchain.pem;
-	ssl_certificate_key /etc/letsencrypt/live/media-converter/privkey.pem;
-	client_max_body_size 0;
-	location / {
-		proxy_pass http://127.0.0.1:$upstream_port;
-		proxy_http_version 1.1;
-		proxy_request_buffering off;
-		proxy_set_header Host $host;
-		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-		proxy_set_header X-Forwarded-Proto $scheme;
-	}
-}
-```
+Without `--nginx`, the script only gets the certificate, for any other proxy. It then also accepts the domains
+as `-d media.example.com -d api.example.com -d s3.example.com`.
 
-Certificates last 90 days, so renew them from root's crontab. The script does nothing until 30 days remain.
-certbot needs port 80 for the renewal, so these commands stop the proxy for a few seconds and start it again
-with the new certificate. Use the same variables on `issue` if the proxy is already running.
+Certificates last 90 days, so renew them from root's crontab. The script does nothing until 30 days remain,
+then stops NGINX for a few seconds and starts it again with the new certificate.
 
 ```cron
-0 4 * * * PROXY_STOP_CMD="systemctl stop nginx" PROXY_START_CMD="systemctl start nginx" /path/to/media-converter/scripts/letsencrypt.sh renew
+0 4 * * * /path/to/media-converter/scripts/letsencrypt.sh renew
 ```
 
 ## API walkthrough
