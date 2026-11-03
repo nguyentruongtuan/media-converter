@@ -119,6 +119,64 @@ s3.example.com {
 Providers that proxy traffic can cap request size. Cloudflare's Free and Pro plans, for example, reject
 bodies over 100 MB, which blocks larger uploads through `s3.example.com`.
 
+### Let's Encrypt certificates for another proxy
+
+Caddy needs none of this. For a proxy that does not get its own certificates, such as NGINX,
+`scripts/letsencrypt.sh` requests one certificate covering all the domains, using certbot in Docker. Run it
+on the server, as root, once DNS points at the server and port 80 is reachable from the internet. It reads
+the domains from `.env`, or takes them as `-d media.example.com -d api.example.com -d s3.example.com`.
+Running it accepts the Let's Encrypt subscriber agreement.
+
+Try `--staging` first, because repeated failures against production hit a rate limit:
+
+```bash
+sudo scripts/letsencrypt.sh issue --email you@example.com --staging
+```
+
+```bash
+sudo scripts/letsencrypt.sh issue --email you@example.com
+```
+
+The certificate is written to `/etc/letsencrypt/live/media-converter/`. Staging certificates are not trusted
+by browsers, so they go to `media-converter-staging/` and never replace a production one. This NGINX config
+uses the certificate, and meets the `Host` and body size requirements above:
+
+```nginx
+map $host $upstream_port {
+	media.example.com 8080;
+	api.example.com 8000;
+	s3.example.com 9000;
+}
+server {
+	listen 80;
+	server_name media.example.com api.example.com s3.example.com;
+	return 301 https://$host$request_uri;
+}
+server {
+	listen 443 ssl;
+	server_name media.example.com api.example.com s3.example.com;
+	ssl_certificate /etc/letsencrypt/live/media-converter/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/media-converter/privkey.pem;
+	client_max_body_size 0;
+	location / {
+		proxy_pass http://127.0.0.1:$upstream_port;
+		proxy_http_version 1.1;
+		proxy_request_buffering off;
+		proxy_set_header Host $host;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+	}
+}
+```
+
+Certificates last 90 days, so renew them from root's crontab. The script does nothing until 30 days remain.
+certbot needs port 80 for the renewal, so these commands stop the proxy for a few seconds and start it again
+with the new certificate. Use the same variables on `issue` if the proxy is already running.
+
+```cron
+0 4 * * * PROXY_STOP_CMD="systemctl stop nginx" PROXY_START_CMD="systemctl start nginx" /path/to/media-converter/scripts/letsencrypt.sh renew
+```
+
 ## API walkthrough
 
 ```bash
