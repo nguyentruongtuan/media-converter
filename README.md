@@ -72,6 +72,53 @@ Then open `http://192.168.1.20:8080` on the phone. Keep the page open with the s
 until the upload finishes: an interrupted upload starts again from zero. This setup sends the API key
 over plain HTTP, so use it only on a trusted network; the Helm chart serves everything over HTTPS.
 
+## Use your own domains
+
+To reach the Compose stack through your own domains, point three hostnames at this machine and put a
+reverse proxy or tunnel in front. Each hostname forwards to one local port:
+
+| Example domain | Local port | Serves |
+| --- | --- | --- |
+| `media.example.com` | `8080` | Web app and transcoded media |
+| `api.example.com` | `8000` | API |
+| `s3.example.com` | `9000` | Presigned uploads to MinIO |
+
+Add the public addresses to `.env`, and replace the development credentials: anyone who can reach these
+domains could otherwise use `dev-key` and `minioadmin`.
+
+```bash
+PUBLIC_API_BASE_URL=https://api.example.com
+PUBLIC_MEDIA_BASE_URL=https://media.example.com/media
+MINIO_PUBLIC_ENDPOINT=s3.example.com
+MINIO_PUBLIC_SECURE=true
+API_KEYS=admin:a-long-random-key:admin
+MINIO_ROOT_USER=a-random-user
+MINIO_ROOT_PASSWORD=a-long-random-password
+BIND_ADDRESS=127.0.0.1
+```
+
+`BIND_ADDRESS=127.0.0.1` keeps the ports off the network, so use it only when the proxy runs on this
+machine. Run `docker compose up -d` to apply the changes, then open `https://media.example.com`.
+
+The proxy must keep the original `Host` header on `s3.example.com`, because it is part of the upload
+signature. It must also allow request bodies as large as your uploads. Caddy does both by default and
+gets the certificates itself:
+
+```caddyfile
+media.example.com {
+	reverse_proxy localhost:8080
+}
+api.example.com {
+	reverse_proxy localhost:8000
+}
+s3.example.com {
+	reverse_proxy localhost:9000
+}
+```
+
+Providers that proxy traffic can cap request size. Cloudflare's Free and Pro plans, for example, reject
+bodies over 100 MB, which blocks larger uploads through `s3.example.com`.
+
 ## API walkthrough
 
 ```bash
