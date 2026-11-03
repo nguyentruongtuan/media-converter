@@ -1,0 +1,288 @@
+# Default values for media-converter.
+# Everything that has to change per environment lives here; the templates are environment-agnostic.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Helm installs into the namespace given by `--namespace`. Set create=true to let the chart own the
+# namespace instead (it then carries the Pod Security Admission labels the manifests used to set).
+namespace:
+  create: false
+  name: ""
+  podSecurityLabels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+
+# Hostnames. Used by the Ingresses, the presigned-URL config, the upload page and MINIO_SERVER_URL.
+hosts:
+  api: api.example.com
+  media: media.example.com
+  s3: s3.example.com
+
+images:
+  # Registry prefix applied to app/nginx/minio images below (leave empty to use bare names).
+  registry: registry.example.com
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+  app:
+    repository: media-converter
+    tag: "" # defaults to .Chart.AppVersion
+  nginx:
+    repository: media-converter-nginx
+    tag: "" # defaults to .Chart.AppVersion
+  minio:
+    repository: media-converter-minio
+    tag: RELEASE.2025-04-22T22-12-26Z
+  # Dependencies pulled from upstream registries, so not prefixed with images.registry.
+  postgres: postgres:16-alpine
+  redis: redis:7.4-alpine
+  rclone: rclone/rclone:1.68
+
+# Non-secret application configuration. Rendered verbatim into the ConfigMap, so any extra key
+# here reaches the API, workers and scheduler as an environment variable.
+config:
+  ENVIRONMENT: production
+  LOG_LEVEL: INFO
+  LOG_JSON: "true"
+  MINIO_SECURE: "false"
+  MINIO_PUBLIC_SECURE: "true"
+  SOURCE_BUCKET: videos-source
+  OUTPUT_BUCKET: videos-output
+  OUTPUT_BUCKET_PUBLIC_READ: "true"
+  AUTH_ENABLED: "true"
+  MAX_UPLOAD_BYTES: "10737418240"
+  MAX_VIDEO_DURATION_SECONDS: "14400"
+  X264_PRESET: veryfast
+  DEFAULT_CRF: "23"
+  HLS_SEGMENT_SECONDS: "6"
+  WORK_DIR: /scratch
+  JOB_MAX_ATTEMPTS: "3"
+  JOB_LEASE_SECONDS: "300"
+  JOB_HEARTBEAT_SECONDS: "30"
+  JOB_TIMEOUT_SECONDS: "14400"
+  # Cluster-wide cap enforced in Redis, independent of how many worker pods KEDA starts.
+  MAX_CONCURRENT_JOBS: "10"
+  RECOVERY_INTERVAL_SECONDS: "60"
+  STALE_PENDING_SECONDS: "900"
+
+# Credentials. Prefer create=false plus an externally managed Secret (Sealed Secrets, SOPS,
+# External Secrets); `scripts/generate-secrets.sh` writes a filled-in copy of the same keys.
+secrets:
+  create: true
+  existingSecret: ""
+  postgresUser: transcoder
+  postgresPassword: CHANGE_ME
+  postgresDb: transcoder
+  # Leave empty to derive postgresql+psycopg://<user>:<password>@<postgres service>:5432/<db>.
+  databaseUrl: ""
+  minioRootUser: CHANGE_ME
+  minioRootPassword: CHANGE_ME
+  minioAccessKey: CHANGE_ME
+  minioSecretKey: CHANGE_ME
+  # Comma-separated name:key[:admin]
+  apiKeys: admin:CHANGE_ME:admin
+
+api:
+  replicas: 2
+  # Migrations are serialised with a Postgres advisory lock, so every replica can run them safely.
+  migrations:
+    enabled: true
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  service:
+    port: 8000
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+worker:
+  # Replica count is owned by KEDA when keda.enabled; this is the starting value.
+  replicas: 1
+  # SIGTERM triggers Celery's warm shutdown: the current job is allowed to finish. A job still
+  # running when the grace period ends is killed; its message is redelivered (acks_late) and the
+  # expired lease lets another worker claim and redo it.
+  terminationGracePeriodSeconds: 3600
+  metricsPort: 9101
+  # libx264 uses all available cores; the limit bounds noisy-neighbour impact.
+  resources:
+    requests: { cpu: "2", memory: 2Gi, ephemeral-storage: 20Gi }
+    limits: { cpu: "4", memory: 6Gi, ephemeral-storage: 60Gi }
+  # Temporary transcoding space: source + all renditions + HLS segments for one job.
+  # Point at a generic ephemeral volume on a fast StorageClass if node disks are small.
+  scratch:
+    sizeLimit: 50Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+scheduler:
+  metricsPort: 9102
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+# NGINX edge that serves transcoded output straight from MinIO.
+media:
+  replicas: 2
+  service:
+    port: 8080
+  resolver: kube-dns.kube-system.svc.cluster.local
+  cache:
+    sizeLimit: 12Gi
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+postgres:
+  enabled: true
+  service:
+    port: 5432
+  persistence:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+  nodeSelector: {}
+  tolerations: []
+
+redis:
+  enabled: true
+  service:
+    port: 6379
+  # AOF persistence keeps queued messages across restarts; noeviction because evicting broker keys
+  # would silently drop jobs.
+  args: ["--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  nodeSelector: {}
+  tolerations: []
+
+minio:
+  enabled: true
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  persistence:
+    size: 500Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 4Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# Set when postgres/redis/minio are disabled and run outside the release.
+externalEndpoints:
+  postgresHost: ""
+  redisUrl: ""
+  minioEndpoint: ""
+
+# Requires ingress-nginx and cert-manager with the ClusterIssuer named below.
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+  api:
+    enabled: true
+    tlsSecretName: api-tls
+    # /metrics is deliberately not exposed publicly.
+    paths:
+      - { path: /v1, pathType: Prefix }
+      - { path: /health, pathType: Prefix }
+      - { path: /docs, pathType: Prefix }
+      - { path: /openapi.json, pathType: Exact }
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: 1m
+      nginx.ingress.kubernetes.io/limit-rps: "20"
+  media:
+    enabled: true
+    tlsSecretName: media-tls
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  # Direct-to-MinIO uploads with presigned URLs. Size limits come from the presigned POST policy.
+  s3:
+    enabled: true
+    tlsSecretName: s3-tls
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# Requires KEDA (scripts/install-keda.sh). Scales transcode workers on queued + in-flight jobs.
+keda:
+  enabled: true
+  pollingInterval: 10
+  cooldownPeriod: 300
+  minReplicaCount: 0
+  # Upper bound on worker pods; config.MAX_CONCURRENT_JOBS caps concurrent transcodes cluster-wide.
+  maxReplicaCount: 10
+  # Queued + in-flight, from Prometheus. Celery removes a message from the Redis list once a worker
+  # takes it, so without this trigger KEDA would scale away pods that are busy transcoding.
+  prometheus:
+    enabled: true
+    serverAddress: http://prometheus-operated.monitoring.svc.cluster.local:9090
+
+backups:
+  enabled: true
+  # rclone remote for the off-cluster S3-compatible target.
+  offsite:
+    create: true
+    existingSecret: ""
+    type: s3
+    provider: Other
+    endpoint: https://backup.example.com
+    accessKeyId: CHANGE_ME
+    secretAccessKey: CHANGE_ME
+    bucket: media-converter-backup
+  postgres:
+    enabled: true
+    schedule: "15 2 * * *"
+    retainDays: 14
+  objectStorage:
+    enabled: true
+    schedule: "45 2 * * *"
+    # Originals are irreplaceable. Outputs can be regenerated, but copying them avoids a full
+    # re-transcode after a disaster; set false to save backup space.
+    includeOutputs: true
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+      limits: { cpu: "2", memory: 1Gi }
+
+# Prometheus Operator objects. Needs the kube-prometheus-stack CRDs.
+monitoring:
+  enabled: false
+  # Label the operator selects ServiceMonitors/PodMonitors/PrometheusRules by.
+  releaseLabel: kube-prometheus-stack

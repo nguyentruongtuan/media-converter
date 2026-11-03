@@ -1,0 +1,71 @@
+{{- $name := include "mc.name" (list . "scheduler") }}
+# Celery beat plus a small worker for maintenance tasks (stale-job recovery). Exactly one replica,
+# otherwise the schedule would fire once per replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "mc.selectorLabels" (list . "scheduler") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mc.labels" . | nindent 8 }}
+        {{- include "mc.selectorLabels" (list . "scheduler") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.scheduler.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "mc.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: scheduler
+          image: {{ include "mc.image.app" . | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "-Q", "maintenance",
+                 "--pool=solo", "-n", "scheduler@%h", "--schedule=/tmp/celerybeat-schedule", "--loglevel=INFO"]
+          {{- include "mc.appEnvFrom" . | nindent 10 }}
+          env:
+            - name: WORKER_METRICS_PORT
+              value: {{ .Values.scheduler.metricsPort | quote }}
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-alive') > 120)"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

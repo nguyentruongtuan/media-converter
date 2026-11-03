@@ -1,0 +1,55 @@
+{{- if .Values.keda.enabled }}
+# Requires KEDA (scripts/install-keda.sh). Scales transcode workers on queued + in-flight jobs.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "mc.name" (list . "transcode-worker") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "mc.name" (list . "transcode-worker") }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  # Upper bound on worker pods; MAX_CONCURRENT_JOBS (config) caps concurrent transcodes cluster-wide.
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - { type: Pods, value: 4, periodSeconds: 30 }
+        # Scale down slowly: a removed pod gets terminationGracePeriodSeconds to finish its job.
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies:
+            - { type: Pods, value: 1, periodSeconds: 120 }
+  triggers:
+    # Queue length alone: one pod per waiting message. Works without Prometheus and handles 0 -> 1.
+    - type: redis
+      metadata:
+        {{- if .Values.redis.enabled }}
+        address: {{ printf "%s.%s.svc.cluster.local:%v" (include "mc.name" (list . "redis")) (include "mc.namespace" .) .Values.redis.service.port | quote }}
+        {{- else }}
+        # host:port taken from externalEndpoints.redisUrl (scheme and database index dropped).
+        address: {{ regexReplaceAll "^redis://|/[0-9]+$" (include "mc.redisUrl" .) "" | quote }}
+        {{- end }}
+        listName: transcode
+        listLength: "1"
+        activationListLength: "0"
+    {{- if .Values.keda.prometheus.enabled }}
+    # Queued + in-flight. Celery removes a message from the list once a worker takes it, so without
+    # this KEDA would scale away pods that are busy transcoding.
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheus.serverAddress | quote }}
+        query: >-
+          sum(transcoder_jobs_active{namespace="{{ include "mc.namespace" . }}"} or vector(0))
+          + max(transcoder_queue_depth{namespace="{{ include "mc.namespace" . }}"} or vector(0))
+        threshold: "1"
+        activationThreshold: "0"
+        ignoreNullValues: "true"
+    {{- end }}
+{{- end }}

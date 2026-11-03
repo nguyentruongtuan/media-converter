@@ -1,4 +1,4 @@
-# Alert rules. Kept in sync with deploy/k8s/monitoring/prometheusrule.yaml.
+# Alert rules. Kept in sync with deploy/monitoring/prometheusrule.yaml.
 groups:
   - name: media-converter
     rules:

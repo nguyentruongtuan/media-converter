@@ -1,6 +1,8 @@
+import subprocess
+
 import pytest
 
-from app.services.ffprobe import ProbeError, parse_probe, validate_probe
+from app.services.ffprobe import ProbeError, parse_probe, probe, validate_probe
 from tests.conftest import make_probe
 
 
@@ -71,3 +73,12 @@ def test_validate_limits(settings):
         validate_probe(make_probe(width=10000, height=5000), settings)
     with pytest.raises(ProbeError):
         validate_probe(make_probe(width=8, height=8), settings)
+
+
+def test_probe_error_does_not_leak_presigned_url(settings, monkeypatch):
+    url = "http://minio:9000/videos-source/a/source.mp4?X-Amz-Credential=key&X-Amz-Signature=secret"
+    failed = subprocess.CompletedProcess([], 1, stdout="", stderr=f"{url}: Invalid data found\n")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: failed)
+    with pytest.raises(ProbeError) as exc:
+        probe(url, settings)
+    assert str(exc.value) == "Not a readable video file: source: Invalid data found"

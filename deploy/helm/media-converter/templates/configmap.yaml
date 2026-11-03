@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mc.configMapName" . }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+data:
+  REDIS_URL: {{ include "mc.redisUrl" . | quote }}
+  MINIO_ENDPOINT: {{ include "mc.minioEndpoint" . | quote }}
+  # Host clients use for presigned uploads (exposed via the s3 Ingress).
+  MINIO_PUBLIC_ENDPOINT: {{ .Values.hosts.s3 | quote }}
+  PUBLIC_MEDIA_BASE_URL: {{ printf "https://%s/media" .Values.hosts.media | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

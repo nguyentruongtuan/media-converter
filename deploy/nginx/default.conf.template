@@ -1,4 +1,5 @@
-# ${MINIO_UPSTREAM}, ${OUTPUT_BUCKET} and ${NGINX_RESOLVER} are substituted from the environment at start.
+# ${MINIO_UPSTREAM}, ${OUTPUT_BUCKET}, ${NGINX_RESOLVER} and ${PUBLIC_API_BASE_URL} are substituted from the
+# environment at start.
 
 # Resolve MinIO per request (not once at startup) so NGINX survives DNS races and MinIO restarts.
 resolver ${NGINX_RESOLVER} valid=30s ipv6=off;
@@ -36,6 +37,13 @@ server {
     location = /healthz {
         access_log off;
         return 200 "ok\n";
+    }
+
+    # Tells the upload page where the API is, so the same image works on any host.
+    location = /config.js {
+        default_type application/javascript;
+        add_header Cache-Control "no-cache";
+        return 200 'window.MEDIA_CONVERTER = { apiBaseUrl: "${PUBLIC_API_BASE_URL}" };';
     }
 
     location / {

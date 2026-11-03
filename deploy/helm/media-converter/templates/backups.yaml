@@ -1,0 +1,134 @@
+{{- if .Values.backups.enabled }}
+{{- $secret := include "mc.secretName" . }}
+{{- $backupSecret := include "mc.backupSecretName" . }}
+{{- $minioEndpoint := printf "http://%s" (include "mc.minioEndpoint" .) }}
+# Nightly Postgres dumps into MinIO, and nightly replication of MinIO buckets to an off-cluster
+# S3-compatible target. Configure the target under backups.offsite (rclone env config).
+{{- if and .Values.backups.offsite.create (not .Values.backups.offsite.existingSecret) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $backupSecret }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  RCLONE_CONFIG_OFFSITE_TYPE: {{ .Values.backups.offsite.type | quote }}
+  RCLONE_CONFIG_OFFSITE_PROVIDER: {{ .Values.backups.offsite.provider | quote }}
+  RCLONE_CONFIG_OFFSITE_ENDPOINT: {{ .Values.backups.offsite.endpoint | quote }}
+  RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: {{ .Values.backups.offsite.accessKeyId | quote }}
+  RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: {{ .Values.backups.offsite.secretAccessKey | quote }}
+  OFFSITE_BUCKET: {{ .Values.backups.offsite.bucket | quote }}
+{{- end }}
+{{- if .Values.backups.postgres.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mc.name" (list . "postgres-backup") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backups.postgres.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "mc.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- include "mc.imagePullSecrets" . | nindent 10 }}
+          initContainers:
+            - name: dump
+              image: {{ .Values.images.postgres | quote }}
+              command: ["sh", "-c", "pg_dump -h {{ include "mc.postgresHost" . }} -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -Fc -f /backup/transcoder-$(date -u +%Y%m%dT%H%M%SZ).dump"]
+              env:
+                - name: POSTGRES_USER
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: POSTGRES_USER } }
+                - name: POSTGRES_DB
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: POSTGRES_DB } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: POSTGRES_PASSWORD } }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+          containers:
+            - name: upload
+              image: {{ .Values.images.rclone | quote }}
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  rclone mkdir minio:backups &&
+                  rclone copy /backup minio:backups/postgres/ &&
+                  rclone delete --min-age {{ .Values.backups.postgres.retainDays }}d minio:backups/postgres/ &&
+                  rclone copy /backup offsite:$OFFSITE_BUCKET/postgres/
+              env:
+                - { name: RCLONE_CONFIG_MINIO_TYPE, value: s3 }
+                - { name: RCLONE_CONFIG_MINIO_PROVIDER, value: Minio }
+                - { name: RCLONE_CONFIG_MINIO_ENDPOINT, value: {{ $minioEndpoint | quote }} }
+                - name: RCLONE_CONFIG_MINIO_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: MINIO_ACCESS_KEY } }
+                - name: RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: MINIO_SECRET_KEY } }
+              envFrom:
+                - secretRef: { name: {{ $backupSecret }} }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+          volumes:
+            - name: backup
+              emptyDir: {}
+{{- end }}
+{{- if .Values.backups.objectStorage.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mc.name" (list . "object-storage-backup") }}
+  labels:
+    {{- include "mc.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backups.objectStorage.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "mc.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- include "mc.imagePullSecrets" . | nindent 10 }}
+          containers:
+            - name: sync
+              image: {{ .Values.images.rclone | quote }}
+              command: ["sh", "-c"]
+              # Originals are irreplaceable. Outputs can be regenerated, but copying them avoids a
+              # full re-transcode after a disaster; backups.objectStorage.includeOutputs=false
+              # skips them to save backup space.
+              args:
+                - >-
+                  rclone sync --fast-list --transfers 8 minio:{{ .Values.config.SOURCE_BUCKET }} offsite:$OFFSITE_BUCKET/{{ .Values.config.SOURCE_BUCKET }}
+                  {{- if .Values.backups.objectStorage.includeOutputs }} &&
+                  rclone sync --fast-list --transfers 8 minio:{{ .Values.config.OUTPUT_BUCKET }} offsite:$OFFSITE_BUCKET/{{ .Values.config.OUTPUT_BUCKET }}
+                  {{- end }}
+              env:
+                - { name: RCLONE_CONFIG_MINIO_TYPE, value: s3 }
+                - { name: RCLONE_CONFIG_MINIO_PROVIDER, value: Minio }
+                - { name: RCLONE_CONFIG_MINIO_ENDPOINT, value: {{ $minioEndpoint | quote }} }
+                - name: RCLONE_CONFIG_MINIO_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: MINIO_ACCESS_KEY } }
+                - name: RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: {{ $secret }}, key: MINIO_SECRET_KEY } }
+              envFrom:
+                - secretRef: { name: {{ $backupSecret }} }
+              resources:
+                {{- toYaml .Values.backups.objectStorage.resources | nindent 16 }}
+{{- end }}
+{{- end }}

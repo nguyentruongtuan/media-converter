@@ -15,6 +15,8 @@ Client ──► FastAPI ──► PostgreSQL (metadata, job state)
 ## Features
 
 - **Direct uploads** to MinIO with presigned POST (size enforced by the policy) or PUT.
+- **Browser upload page** for PCs and phones at `/upload.html` on the media edge: file picker, camera
+  or drag and drop, upload progress, then transcoding progress and a link to the player.
 - **Validation** on upload completion: object exists, size matches, FFprobe confirms a real video
   stream, duration and resolution limits. Corrupt uploads are marked `invalid` and deleted.
 - **Transcoding** to H.264 (High/Main) + AAC-LC MP4 at 1080p/720p/480p/360p, preserving the display
@@ -52,6 +54,22 @@ Monitoring (Prometheus `:9090`, Grafana `:3000`):
 ```bash
 docker compose --profile monitoring up -d
 ```
+
+## Upload from a PC or phone
+
+Open `http://localhost:8080/upload.html`, enter the API key (`dev-key`), choose a video and press
+**Upload and transcode**. The key is kept in that browser's local storage.
+
+A phone cannot reach `localhost`, so point the stack at this machine's LAN IP first. The phone must be
+on the same network, and ports 8000, 8080 and 9000 must be reachable:
+
+```bash
+PUBLIC_HOST=192.168.1.20 docker compose up -d
+```
+
+Then open `http://192.168.1.20:8080/upload.html` on the phone. Keep the page open with the screen on
+until the upload finishes: an interrupted upload starts again from zero. This setup sends the API key
+over plain HTTP, so use it only on a trusted network; the Helm chart serves everything over HTTPS.
 
 ## API walkthrough
 
@@ -108,8 +126,8 @@ videos-output/<video-id>/<job-id>/
 app/            FastAPI app, Celery worker, services (ffprobe, ffmpeg, hls, transcoder, jobs, storage)
 alembic/        Database migrations
 tests/          Unit, API and FFmpeg integration tests; tests/load (Locust)
-deploy/k8s/     Kustomize base: namespace, config, Postgres, Redis, MinIO, API, workers, NGINX, Ingress, KEDA, backups
-deploy/monitoring/  Prometheus/Grafana for Compose + ServiceMonitors, PrometheusRule, dashboard for Kubernetes
+deploy/helm/     Helm chart: config, Postgres, Redis, MinIO, API, workers, NGINX, Ingress, KEDA, backups, monitors
+deploy/monitoring/  Prometheus/Grafana for Compose + PrometheusRule and dashboard for Kubernetes
 deploy/nginx/   Media edge image (MIME types, CORS, range caching) + player/
 deploy/minio/   MinIO built from source
 scripts/        e2e smoke test, chaos/recovery test, KEDA install, secret generation

@@ -1,0 +1,24 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed as release {{ .Release.Name }} in namespace {{ include "mc.namespace" . }}.
+
+Images:
+  app    {{ include "mc.image.app" . }}
+  nginx  {{ include "mc.image.nginx" . }}
+  minio  {{ include "mc.image.minio" . }}
+
+Endpoints:
+  API    https://{{ .Values.hosts.api }}
+  Media  https://{{ .Values.hosts.media }}
+  S3     https://{{ .Values.hosts.s3 }}
+
+{{ if and .Values.secrets.create (eq .Values.secrets.postgresPassword "CHANGE_ME") -}}
+WARNING: the release is using the placeholder credentials from values.yaml. Generate real ones
+  scripts/generate-secrets.sh
+and install with --set secrets.create=false --set secrets.existingSecret=media-converter-secrets,
+or supply secrets.* through your own values file / secret manager.
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ include "mc.namespace" . }} rollout status deploy/{{ include "mc.name" (list . "api") }}
+{{ if not .Values.monitoring.enabled -}}
+Prometheus Operator scrape configs are off (monitoring.enabled=false).
+{{- end }}

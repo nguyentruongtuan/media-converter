@@ -5,10 +5,10 @@ x-app-env: &app-env
   DATABASE_URL: postgresql+psycopg://transcoder:transcoder@postgres:5432/transcoder
   REDIS_URL: redis://redis:6379/0
   MINIO_ENDPOINT: minio:9000
-  MINIO_PUBLIC_ENDPOINT: localhost:9000
+  MINIO_PUBLIC_ENDPOINT: ${PUBLIC_HOST:-localhost}:9000
   MINIO_ACCESS_KEY: minioadmin
   MINIO_SECRET_KEY: minioadmin
-  PUBLIC_MEDIA_BASE_URL: http://localhost:${MEDIA_PORT:-8080}/media
+  PUBLIC_MEDIA_BASE_URL: http://${PUBLIC_HOST:-localhost}:${MEDIA_PORT:-8080}/media
   API_KEYS: dev:dev-key:admin
   WORK_DIR: /scratch
   JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
@@ -110,6 +110,7 @@ services:
     environment:
       MINIO_UPSTREAM: minio:9000
       OUTPUT_BUCKET: videos-output
+      PUBLIC_API_BASE_URL: http://${PUBLIC_HOST:-localhost}:8000
     ports: ["${MEDIA_PORT:-8080}:8080"]
     depends_on:
       minio: { condition: service_healthy }
