@@ -5,6 +5,7 @@ import { AppSidebar, MENU } from "@/components/app-sidebar"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { UploadView } from "@/components/upload-view"
 import { VideosView } from "@/components/videos-view"
+import { useFolders } from "@/hooks/use-folders"
 import { useRoute } from "@/hooks/use-route"
 import { useUpload } from "@/hooks/use-upload"
 import { readApiKey, saveApiKey } from "@/lib/api"
@@ -12,14 +13,16 @@ import { readApiKey, saveApiKey } from "@/lib/api"
 export default function App() {
   const route = useRoute()
   const [apiKey, setApiKey] = useState(readApiKey)
-  const upload = useUpload(apiKey)
-  const uploading = upload.progress !== null
 
   const changeKey = useCallback((key: string) => {
     saveApiKey(key)
     setApiKey(key)
   }, [])
   const forgetKey = useCallback(() => changeKey(""), [changeKey])
+
+  const folders = useFolders(apiKey, forgetKey)
+  const upload = useUpload(apiKey, folders.folders)
+  const uploading = upload.progress !== null
 
   const fraction = upload.progress?.fraction
   const uploadBadge = uploading ? (fraction == null ? "..." : `${Math.round(fraction * 100)}%`) : null
@@ -37,7 +40,7 @@ export default function App() {
           {!apiKey ? (
             <ApiKeyForm onSubmit={changeKey} />
           ) : route === "videos" ? (
-            <VideosView apiKey={apiKey} uploading={uploading} onUnauthorized={forgetKey} />
+            <VideosView apiKey={apiKey} uploading={uploading} onUnauthorized={forgetKey} folders={folders} />
           ) : (
             <UploadView upload={upload} />
           )}

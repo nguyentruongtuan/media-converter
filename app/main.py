@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import REGISTRY, make_asgi_app
 
-from app.api import health, jobs, videos
+from app.api import folders, health, jobs, videos
 from app.config import get_settings
 from app.db import session_scope
 from app.errors import register_exception_handlers
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(health.router)
+    app.include_router(folders.router)
     app.include_router(videos.router)
     app.include_router(jobs.router)
     app.mount("/metrics", make_asgi_app())

@@ -49,11 +49,22 @@ class OutputKind(StrEnum):
     THUMBNAIL = "thumbnail"
 
 
+class Folder(Base):
+    __tablename__ = "folders"
+    __table_args__ = (UniqueConstraint("owner", "name", name="uq_folders_owner_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Video(Base):
     __tablename__ = "videos"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     owner: Mapped[str] = mapped_column(String(64), index=True)
+    folder_id: Mapped[str | None] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), index=True)
     filename: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(127))
     declared_size_bytes: Mapped[int] = mapped_column(BigInteger)

@@ -16,7 +16,7 @@ Client ──► FastAPI ──► PostgreSQL (metadata, job state)
 
 - **Direct uploads** to MinIO with presigned POST (size enforced by the policy) or PUT.
 - **Web app** for PCs and phones on the media edge (React + shadcn/ui): list uploaded videos with their
-  status and thumbnail, and upload by file picker, camera or drag and drop with upload and transcoding
+  status and thumbnail, group them into folders, and upload by file picker, camera or drag and drop with upload and transcoding
   progress, then a link to the player.
 - **Validation** on upload completion: object exists, size matches, FFprobe confirms a real video
   stream, duration and resolution limits. Corrupt uploads are marked `invalid` and deleted.
@@ -59,7 +59,7 @@ docker compose --profile monitoring up -d
 ## Upload from a PC or phone
 
 Open `http://localhost:8080`, enter the API key (`dev-key`), go to **Upload video**, choose a video and
-press **Upload and transcode**. **Uploaded videos** lists what you have uploaded. The key is kept in that browser's local storage.
+press **Upload and transcode**. Pick a folder before uploading to file the video there. **Uploaded videos** lists what you have uploaded; create folders and move videos between them there. The key is kept in that browser's local storage.
 
 A phone cannot reach `localhost`, so point the stack at this machine's LAN IP first. The phone must be
 on the same network, and ports 8000, 8080 and 9000 must be reachable:
@@ -98,10 +98,13 @@ curl -s $API/v1/jobs/<job-id> -H "X-API-Key: $KEY" | jq '{status, progress, hls_
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/v1/videos` | Register a video, returns presigned upload (POST form + PUT URL) |
+| `POST` | `/v1/videos` | Register a video (optional `folder_id`), returns presigned upload (POST form + PUT URL) |
 | `POST` | `/v1/videos/{id}/complete` | Verify object, FFprobe, store metadata (`ready` / `invalid`) |
-| `GET` | `/v1/videos`, `/v1/videos/{id}` | List (filter `status`, paginate) / detail with source URL |
+| `GET` | `/v1/videos`, `/v1/videos/{id}` | List (filter `status`, `folder_id` or `none`, paginate) / detail with source URL |
+| `PATCH` | `/v1/videos/{id}` | Move to a folder (`folder_id`, `null` to take it out) |
 | `DELETE` | `/v1/videos/{id}` | Delete video, jobs, original and all outputs (409 while processing) |
+| `POST`, `GET` | `/v1/folders` | Create (`name`) / list folders |
+| `DELETE` | `/v1/folders/{id}` | Delete a folder; its videos stay, outside any folder |
 | `POST` | `/v1/videos/{id}/jobs` | Create a job (`presets`, `formats`, `crf`, `x264_preset`) |
 | `GET` | `/v1/jobs`, `/v1/jobs/{id}` | List (filter `video_id`, `status`) / detail with output URLs |
 | `POST` | `/v1/jobs/{id}/retry` | Re-run a failed job |

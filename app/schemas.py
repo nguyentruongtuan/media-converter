@@ -14,6 +14,7 @@ class VideoCreate(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str = Field(min_length=1, max_length=127)
     size_bytes: int = Field(gt=0)
+    folder_id: str | None = None
 
     @field_validator("filename")
     @classmethod
@@ -21,6 +22,27 @@ class VideoCreate(BaseModel):
         if "/" in v or "\\" in v or v in (".", ".."):
             raise ValueError("filename must not contain path separators")
         return v
+
+
+class VideoUpdate(BaseModel):
+    folder_id: str | None = Field(description="Folder to move the video to; null takes it out of its folder")
+
+
+class FolderCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+
+
+class FolderOut(BaseModel):
+    id: str
+    name: str
+    owner: str
+    mine: bool
+
+
+class FolderList(BaseModel):
+    items: list[FolderOut]
 
 
 class UploadInstructions(BaseModel):
@@ -37,6 +59,7 @@ class VideoOut(BaseModel):
 
     id: str
     owner: str
+    folder_id: str | None
     filename: str
     content_type: str
     status: str

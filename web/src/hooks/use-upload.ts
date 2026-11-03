@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { api, formatBytes, type Job, playerUrl, saveApiKey, type VideoCreated } from "@/lib/api"
+import { api, type Folder, formatBytes, type Job, playerUrl, saveApiKey, type VideoCreated } from "@/lib/api"
 
 const POLL_MS = 2000
 // Android pickers can return names like "video:1234", which the extension allow-list would reject.
@@ -55,8 +55,13 @@ function send(run: Run, upload: VideoCreated["upload"], file: File, onProgress: 
 }
 
 // Lives above the views so that moving to another menu item does not interrupt a running upload.
-export function useUpload(apiKey: string) {
+export function useUpload(apiKey: string, folders: Folder[]) {
   const [file, setFile] = useState<File | null>(null)
+  const [pickedFolderId, setFolderId] = useState("")
+  // A new video belongs to whoever uploads it, so only their own folders can take it.
+  const folderChoices = folders.filter((f) => f.mine)
+  // The picked folder may have been deleted on the videos page since.
+  const folderId = folderChoices.some((f) => f.id === pickedFolderId) ? pickedFolderId : ""
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [error, setError] = useState("")
   const [watchUrl, setWatchUrl] = useState("")
@@ -122,6 +127,7 @@ export function useUpload(apiKey: string) {
         filename: uploadName(file),
         content_type: uploadType(file),
         size_bytes: file.size,
+        folder_id: folderId || null,
       })
       videoId = created.video.id
       if (current.cancelled) throw new Cancelled()
@@ -178,5 +184,5 @@ export function useUpload(apiKey: string) {
     }
   }, [keepAwake])
 
-  return { file, progress, error, watchUrl, pick, start, cancel }
+  return { file, folderChoices, folderId, setFolderId, progress, error, watchUrl, pick, start, cancel }
 }

@@ -4,6 +4,8 @@ import { UploadCloud } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { NativeSelect } from "@/components/ui/native-select"
 import { Progress } from "@/components/ui/progress"
 import type { useUpload } from "@/hooks/use-upload"
 import { routeHref } from "@/hooks/use-route"
@@ -11,7 +13,7 @@ import { formatBytes } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 export function UploadView({ upload }: { upload: ReturnType<typeof useUpload> }) {
-  const { file, progress, error, watchUrl, pick, start, cancel } = upload
+  const { file, folderChoices, folderId, setFolderId, progress, error, watchUrl, pick, start, cancel } = upload
   const [over, setOver] = useState(false)
 
   return (
@@ -72,6 +74,26 @@ export function UploadView({ upload }: { upload: ReturnType<typeof useUpload> })
                 {file ? `${file.name} (${formatBytes(file.size)})` : "or drop it here"}
               </span>
             </label>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="upload-folder">Folder</Label>
+              <NativeSelect id="upload-folder" value={folderId} onChange={(e) => setFolderId(e.target.value)}>
+                <option value="">No folder</option>
+                {folderChoices.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </NativeSelect>
+              {folderChoices.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Create folders under{" "}
+                  <a className="underline" href={routeHref("videos")}>
+                    Uploaded videos
+                  </a>
+                  .
+                </p>
+              )}
+            </div>
             <Button type="submit" size="lg" disabled={!file}>
               Upload and transcode
             </Button>

@@ -7,8 +7,17 @@ declare global {
 const API = window.MEDIA_CONVERTER.apiBaseUrl.replace(/\/$/, "")
 const KEY_STORAGE = "media-converter.api-key"
 
+export type Folder = {
+  id: string
+  name: string
+  owner: string
+  mine: boolean // an admin also sees other owners' folders
+}
+
 export type Video = {
   id: string
+  owner: string
+  folder_id: string | null
   filename: string
   status: "pending_upload" | "ready" | "invalid"
   size_bytes: number | null
