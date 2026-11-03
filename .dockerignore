@@ -8,6 +8,6 @@
 build
 deploy
 docs
-player
+web
 scripts
 .env

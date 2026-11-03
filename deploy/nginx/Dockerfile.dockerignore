@@ -1,3 +1,5 @@
 *
 !deploy/nginx/default.conf.template
-!player/
+!web/
+web/node_modules
+web/dist

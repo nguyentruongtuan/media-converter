@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_enqueue, get_prober, get_storage_dep
+from app.api.folders import load_folder_for_video
 from app.api.serializers import job_out
 from app.auth import Principal, get_principal
 from app.config import Settings, get_settings
@@ -23,6 +24,7 @@ from app.schemas import (
     VideoDetail,
     VideoList,
     VideoOut,
+    VideoUpdate,
 )
 from app.services import jobs as job_service
 from app.services.ffprobe import ProbeError, validate_probe
@@ -66,8 +68,12 @@ def create_video(
             "file_too_large", f"File exceeds the {settings.max_upload_bytes}-byte upload limit", 413
         )
 
+    if body.folder_id:
+        load_folder_for_video(db, body.folder_id, principal.name, principal)
+
     video = Video(
         owner=principal.name,
+        folder_id=body.folder_id or None,
         filename=body.filename,
         content_type=body.content_type,
         declared_size_bytes=body.size_bytes,
@@ -157,6 +163,7 @@ def complete_upload(
 @router.get("", response_model=VideoList)
 def list_videos(
     status: VideoStatus | None = None,
+    folder_id: str | None = Query(None, description="A folder id, or 'none' for videos outside any folder"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -167,6 +174,10 @@ def list_videos(
         query = query.where(Video.owner == principal.name)
     if status:
         query = query.where(Video.status == status)
+    if folder_id == "none":
+        query = query.where(Video.folder_id.is_(None))
+    elif folder_id:
+        query = query.where(Video.folder_id == folder_id)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     items = db.scalars(query.order_by(Video.created_at.desc()).limit(limit).offset(offset)).all()
     return VideoList(
@@ -186,6 +197,21 @@ def get_video(
     if video.status == VideoStatus.READY:
         detail.source_url = storage.presigned_download(storage.source_bucket, video.source_key)
     return detail
+
+
+@router.patch("/{video_id}", response_model=VideoOut)
+def update_video(
+    video_id: str,
+    body: VideoUpdate,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_principal),
+):
+    video = load_video(db, video_id, principal)
+    if body.folder_id:
+        load_folder_for_video(db, body.folder_id, video.owner, principal)
+    video.folder_id = body.folder_id or None
+    db.commit()
+    return video
 
 
 @router.delete("/{video_id}", status_code=204)
