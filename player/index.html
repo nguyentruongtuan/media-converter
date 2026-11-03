@@ -11,6 +11,7 @@
     body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
     main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
     h1 { font-size: 20px; margin: 0 0 16px; }
+    a { color: var(--accent); }
     form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
     input { flex: 1 1 320px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; }
     button, select { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
@@ -23,6 +24,7 @@
 <body>
 <main>
   <h1>Adaptive HLS player</h1>
+  <p><a href="upload.html">Upload a video</a></p>
   <form id="f">
     <input id="src" type="url" placeholder="https://media.example.com/media/&lt;video&gt;/&lt;job&gt;/hls/master.m3u8" required>
     <button>Play</button>

@@ -132,7 +132,9 @@ def probe(source: str, settings: Settings) -> ProbeResult:
     except FileNotFoundError as exc:
         raise RuntimeError(f"ffprobe binary not found: {settings.ffprobe_path}") from exc
     if proc.returncode != 0:
-        raise ProbeError(f"Not a readable video file: {proc.stderr.strip()[-500:] or 'ffprobe failed'}")
+        # The source may be a presigned URL, and this message is returned to API clients.
+        detail = proc.stderr.replace(source, "source").strip()[-500:]
+        raise ProbeError(f"Not a readable video file: {detail or 'ffprobe failed'}")
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:

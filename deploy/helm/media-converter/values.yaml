@@ -13,7 +13,7 @@ namespace:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/warn: restricted
 
-# Hostnames. Used by the Ingresses, the presigned-URL config and MINIO_SERVER_URL.
+# Hostnames. Used by the Ingresses, the presigned-URL config, the upload page and MINIO_SERVER_URL.
 hosts:
   api: api.example.com
   media: media.example.com

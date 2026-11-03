@@ -54,6 +54,8 @@ spec:
               valueFrom: { configMapKeyRef: { name: {{ include "mc.configMapName" . }}, key: OUTPUT_BUCKET } }
             - name: NGINX_RESOLVER
               value: {{ .Values.media.resolver | quote }}
+            - name: PUBLIC_API_BASE_URL
+              value: {{ printf "https://%s" .Values.hosts.api | quote }}
           ports:
             - containerPort: {{ .Values.media.service.port }}
               name: http

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload Video</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fafafa; --fg: #1a1a1a; --muted: #666; --border: #ddd; --accent: #2457d6; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #eee; --muted: #999; --border: #333; --accent: #7aa2ff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 16px; }
+    h1 { font-size: 20px; margin: 0; }
+    a { color: var(--accent); }
+    label { display: block; margin-bottom: 16px; }
+    /* 16px keeps iOS Safari from zooming the page when the field takes focus. */
+    #key { display: block; width: 100%; margin-top: 4px; padding: 10px; font-size: 16px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; }
+    #drop { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 180px; padding: 24px; text-align: center; border: 2px dashed var(--border); border-radius: 8px; cursor: pointer; }
+    #drop:hover, #drop.over, #drop:focus-within { border-color: var(--accent); }
+    #drop strong { color: var(--accent); font-size: 17px; }
+    #drop span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+    #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    #start { width: 100%; min-height: 44px; font-size: 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+    #start:disabled { opacity: .5; cursor: not-allowed; }
+    #cancel { min-height: 44px; padding: 8px 14px; font-size: 15px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+    progress { display: block; width: 100%; height: 10px; margin: 8px 0; accent-color: var(--accent); }
+    #run { margin-top: 16px; }
+    #run p { margin: 0 0 8px; overflow-wrap: anywhere; }
+    #detail { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    #msg { margin-top: 16px; color: #d33; overflow-wrap: anywhere; }
+    #watch { display: block; margin-top: 16px; font-size: 17px; font-weight: 600; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Upload a video</h1>
+    <a href="./">Player</a>
+  </header>
+  <form id="f">
+    <label>API key
+      <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <label id="drop">
+      <!-- video/* opens the photo library and camera on phones, a file dialog on PCs. -->
+      <input id="file" type="file" accept="video/*,.mkv,.avi,.ts,.flv,.wmv,.mpg,.mpeg,.3gp">
+      <strong>Choose a video</strong>
+      <span id="picked">or drop it here</span>
+    </label>
+    <button id="start" disabled>Upload and transcode</button>
+  </form>
+  <div id="run" hidden>
+    <p id="step"></p>
+    <progress id="bar" max="1"></progress>
+    <p id="detail"></p>
+    <button id="cancel" type="button">Cancel</button>
+  </div>
+  <div id="msg" role="alert"></div>
+  <a id="watch" hidden>Watch the video</a>
+</main>
+<script src="config.js"></script>
+<script>
+  const API = window.MEDIA_CONVERTER.apiBaseUrl.replace(/\/$/, "");
+  const KEY_STORAGE = "media-converter.api-key";
+  const POLL_MS = 2000;
+  // Android pickers can return names like "video:1234", which the extension allow-list would reject.
+  const EXTENSIONS = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/3gpp": ".3gp", "video/x-matroska": ".mkv" };
+
+  const $ = (id) => document.getElementById(id);
+  let file = null;
+  let current = null; // { xhr, videoId, cancelled } while an upload is in flight
+  let wakeLock = null;
+
+  class Cancelled extends Error {}
+
+  function readKey() { try { return localStorage.getItem(KEY_STORAGE) || ""; } catch { return ""; } }
+  function saveKey(value) { try { localStorage.setItem(KEY_STORAGE, value); } catch {} }
+
+  function formatBytes(n) {
+    if (n < 1024 ** 2) return (n / 1024).toFixed(0) + " KB";
+    if (n < 1024 ** 3) return (n / 1024 ** 2).toFixed(1) + " MB";
+    return (n / 1024 ** 3).toFixed(2) + " GB";
+  }
+
+  function uploadName(f) {
+    let name = f.name.replace(/[/\\]/g, "_");
+    if (!/\.[a-z0-9]+$/i.test(name)) name += EXTENSIONS[f.type] || "";
+    return name.slice(-255);
+  }
+
+  // Some systems report other types for video files (.ts as a Qt translation file, .mkv as nothing).
+  function uploadType(f) {
+    return f.type.startsWith("video/") ? f.type : "application/octet-stream";
+  }
+
+  function pick(f) {
+    if (!f || current) return;
+    file = f;
+    $("picked").textContent = `${f.name} (${formatBytes(f.size)})`;
+    $("start").disabled = false;
+    $("msg").textContent = "";
+    $("watch").hidden = true;
+  }
+
+  async function api(method, path, body, headers = {}) {
+    let res;
+    try {
+      res = await fetch(API + path, {
+        method,
+        headers: { "X-API-Key": $("key").value, ...(body && { "Content-Type": "application/json" }), ...headers },
+        body: body && JSON.stringify(body),
+      });
+    } catch {
+      throw new Error(`Cannot reach the API at ${API}. Check the connection.`);
+    }
+    const data = res.status === 204 ? null : await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error?.message || `API request failed (${res.status})`);
+    return data;
+  }
+
+  // XHR rather than fetch: fetch has no upload progress events.
+  function send(upload, onProgress) {
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      Object.entries(upload.fields).forEach(([name, value]) => form.append(name, value));
+      form.append("file", file); // S3 ignores any form field after the file
+      const xhr = new XMLHttpRequest();
+      current.xhr = xhr;
+      xhr.open("POST", upload.url);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`Storage rejected the upload (${xhr.status})`)));
+      xhr.onerror = () => reject(new Error(`Upload interrupted. Check the connection to ${new URL(upload.url).host} and try again.`));
+      xhr.onabort = () => reject(new Cancelled());
+      xhr.send(form);
+    });
+  }
+
+  async function waitForJob(jobId) {
+    for (;;) {
+      if (current.cancelled) throw new Cancelled();
+      let job = null;
+      // The work continues on the server, so a phone losing signal for a moment must not fail the run.
+      try { job = await api("GET", `/v1/jobs/${jobId}`); } catch {}
+      if (job) {
+        $("bar").value = job.progress;
+        $("detail").textContent = `${job.status}, ${Math.round(job.progress * 100)}%`;
+        if (job.status === "completed") return job;
+        if (job.status === "failed") throw new Error(job.error || "Transcoding failed");
+      } else {
+        $("detail").textContent = "Reconnecting...";
+      }
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  }
+
+  async function run() {
+    current = { xhr: null, videoId: null, cancelled: false };
+    let uploaded = false;
+    setBusy(true);
+    try {
+      saveKey($("key").value);
+      showStep("Preparing upload...");
+      const created = await api("POST", "/v1/videos", {
+        filename: uploadName(file), content_type: uploadType(file), size_bytes: file.size,
+      });
+      current.videoId = created.video.id;
+      if (current.cancelled) throw new Cancelled();
+
+      showStep("Uploading...");
+      await keepAwake();
+      await send(created.upload, (fraction) => {
+        $("bar").value = fraction;
+        $("detail").textContent = `${formatBytes(fraction * file.size)} of ${formatBytes(file.size)}`;
+      });
+      uploaded = true;
+
+      showStep("Checking the video...");
+      $("bar").removeAttribute("value");
+      await api("POST", `/v1/videos/${current.videoId}/complete`);
+
+      showStep("Transcoding... You can close this page; the job keeps running.");
+      $("cancel").hidden = true;
+      const job = await api("POST", `/v1/videos/${current.videoId}/jobs`, {}, { "Idempotency-Key": current.videoId });
+      const done = await waitForJob(job.id);
+      showWatch(done);
+    } catch (err) {
+      if (!(err instanceof Cancelled)) $("msg").textContent = err.message;
+      // Without the file the row is useless; a rejected file was already marked invalid by the API.
+      if (!uploaded && current.videoId) api("DELETE", `/v1/videos/${current.videoId}`).catch(() => {});
+    } finally {
+      current = null;
+      setBusy(false);
+      releaseWake();
+    }
+  }
+
+  function showStep(text) {
+    $("step").textContent = text;
+    $("detail").textContent = "";
+    $("bar").value = 0;
+  }
+
+  function showWatch(job) {
+    const watch = $("watch");
+    watch.href = "./?src=" + encodeURIComponent(job.hls_url);
+    watch.hidden = false;
+    file = null;
+    $("file").value = "";
+    $("picked").textContent = "or drop it here";
+  }
+
+  function setBusy(busy) {
+    $("run").hidden = !busy;
+    $("cancel").hidden = false;
+    $("f").hidden = busy;
+    $("start").disabled = busy || !file;
+    if (busy) { $("msg").textContent = ""; $("watch").hidden = true; }
+  }
+
+  // Phones suspend the page, and with it the upload, when the screen locks.
+  async function keepAwake() {
+    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+  }
+  function releaseWake() {
+    wakeLock?.release().catch(() => {});
+    wakeLock = null;
+  }
+
+  $("key").value = readKey();
+  $("file").onchange = (e) => pick(e.target.files[0]);
+  $("f").onsubmit = (e) => { e.preventDefault(); if (file && !current) run(); };
+  $("cancel").onclick = () => { if (current) { current.cancelled = true; current.xhr?.abort(); } };
+
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => pick(e.dataTransfer.files[0]));
+  // A file dropped beside the target would otherwise navigate away from the page.
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => e.preventDefault());
+
+  window.addEventListener("beforeunload", (e) => { if (current?.xhr && !current.cancelled && current.xhr.readyState !== 4) e.preventDefault(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && current?.xhr?.readyState < 4) keepAwake(); });
+</script>
+</body>
+</html>
