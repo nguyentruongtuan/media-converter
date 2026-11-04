@@ -125,6 +125,7 @@ services:
       S3_DOMAIN: ${S3_DOMAIN:-}
     volumes:
       - ./deploy/proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/proxy/10-require-domains.sh:/docker-entrypoint.d/10-require-domains.sh:ro
       # A mount rather than a copy, so renewed certificates reach the container.
       - ${LETSENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
     # Not behind BIND_ADDRESS: this is the one service meant to be public.
