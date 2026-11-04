@@ -116,6 +116,21 @@ services:
     depends_on:
       minio: { condition: service_healthy }
 
+  proxy:
+    profiles: [tls]
+    image: nginx:1.27-alpine
+    environment:
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN:-}
+      API_DOMAIN: ${API_DOMAIN:-}
+      S3_DOMAIN: ${S3_DOMAIN:-}
+    volumes:
+      - ./deploy/proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      # A mount rather than a copy, so renewed certificates reach the container.
+      - ${LETSENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
+    # Not behind BIND_ADDRESS: this is the one service meant to be public.
+    ports: ["80:80", "443:443"]
+    depends_on: [nginx, api, minio]
+
   prometheus:
     profiles: [monitoring]
     image: prom/prometheus:v2.54.1

@@ -1,0 +1,43 @@
+# TLS entry point for the Compose "tls" profile. ${MEDIA_DOMAIN}, ${API_DOMAIN} and ${S3_DOMAIN} are substituted
+# from the environment at start.
+
+# Resolve the services per request, so this survives them restarting with new addresses.
+resolver 127.0.0.11 valid=30s ipv6=off;
+
+map $host $media_converter_upstream {
+    ${MEDIA_DOMAIN} nginx:8080;
+    ${API_DOMAIN} api:8000;
+    ${S3_DOMAIN} minio:9000;
+}
+
+server {
+    listen 80;
+    server_name ${MEDIA_DOMAIN} ${API_DOMAIN} ${S3_DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${MEDIA_DOMAIN} ${API_DOMAIN} ${S3_DOMAIN};
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/media-converter/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/media-converter/privkey.pem;
+
+    # Uploads can be any size. The original Host is part of the S3 upload signature.
+    client_max_body_size 0;
+
+    # Requests for any other host, such as scanners hitting the IP address.
+    if ($media_converter_upstream = "") {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://$media_converter_upstream;
+        proxy_http_version 1.1;
+        proxy_request_buffering off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

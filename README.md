@@ -154,6 +154,29 @@ then stops NGINX for a few seconds and starts it again with the new certificate.
 0 4 * * * /path/to/media-converter/scripts/letsencrypt.sh renew
 ```
 
+### Run NGINX in Compose
+
+The `tls` profile adds a `proxy` service, so NGINX does not have to be installed on the server. It publishes
+ports 80 and 443 and forwards each domain to its service. Get the certificate first, without `--nginx`, because
+`proxy` will not start until the certificate exists. Then add this to `.env`, next to the settings above:
+
+```bash
+COMPOSE_PROFILES=tls
+MEDIA_DOMAIN=media.example.com
+API_DOMAIN=api.example.com
+S3_DOMAIN=s3.example.com
+```
+
+Run `docker compose up -d` to start it. The certificate is mounted from `/etc/letsencrypt`, read-only, rather
+than copied, which keeps the private key out of the image and lets renewed certificates reach the container.
+Set `LETSENCRYPT_DIR` if it is somewhere else.
+
+To renew, `proxy` has to release port 80 and then start again to load the new certificate:
+
+```cron
+0 4 * * * PROXY_STOP_CMD="cd /path/to/media-converter && docker compose stop proxy" PROXY_START_CMD="cd /path/to/media-converter && docker compose start proxy" /path/to/media-converter/scripts/letsencrypt.sh renew
+```
+
 ## API walkthrough
 
 ```bash
