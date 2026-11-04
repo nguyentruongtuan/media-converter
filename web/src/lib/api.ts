@@ -103,6 +103,11 @@ export function playerUrl(hlsUrl: string): string {
   return "player.html?src=" + encodeURIComponent(hlsUrl)
 }
 
+// Plays full screen with remote controls, in this tab because a TV has no way to switch tabs.
+export function tvPlayerUrl(hlsUrl: string, title: string): string {
+  return `${playerUrl(hlsUrl)}&tv=1&title=${encodeURIComponent(title)}`
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024 ** 2) return (n / 1024).toFixed(0) + " KB"
   if (n < 1024 ** 3) return (n / 1024 ** 2).toFixed(1) + " MB"

@@ -19,6 +19,19 @@
     video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
     .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; }
     .err { color: #d33; }
+    #osd { display: none; }
+    body.tv { background: #000; color: #fff; font-size: max(16px, 1.25vw); overflow: hidden; }
+    body.tv main { max-width: none; padding: 0; }
+    body.tv main > h1, body.tv main > p, body.tv form, body.tv .row { display: none; }
+    body.tv video { position: fixed; inset: 0; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
+    body.tv #osd { display: flex; flex-direction: column; justify-content: space-between; position: fixed; inset: 0; padding: 5vh 5vw; transition: opacity .2s; background: linear-gradient(#000b, #0000 30%, #0000 60%, #000d); }
+    body.tv.idle #osd { opacity: 0; }
+    #osd-title { font-size: 1.75em; font-weight: 600; overflow-wrap: anywhere; }
+    #osd-bar { height: .4em; margin: .75em 0; border-radius: .2em; background: #fff4; overflow: hidden; }
+    #osd-fill { height: 100%; width: 0; background: #fff; }
+    #osd-info { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5em 2em; font-variant-numeric: tabular-nums; }
+    #osd-hints { margin-top: .5em; color: #ccc; }
+    #osd .err { color: #ff8a80; font-size: 1.25em; }
   </style>
 </head>
 <body>
@@ -36,6 +49,14 @@
     <span id="level"></span>
     <span id="bw"></span>
     <span id="msg" class="err"></span>
+  </div>
+  <div id="osd">
+    <div id="osd-title"></div>
+    <div id="osd-bottom">
+      <div id="osd-bar"><div id="osd-fill"></div></div>
+      <div id="osd-info"><span id="osd-time"></span><span id="osd-state"></span><span id="osd-quality"></span></div>
+      <div id="osd-hints">OK: play or pause · Left, Right: 10 seconds · Up, Down: quality · Back: videos</div>
+    </div>
   </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
@@ -85,7 +106,80 @@
     play(url);
   };
   const initial = new URLSearchParams(location.search).get("src");
+  const params = new URLSearchParams(location.search);
+  if (params.get("tv") === "1") setUpTv(params.get("title") || "");
   if (initial) { document.getElementById("src").value = initial; play(initial); }
+
+  // Full screen playback driven by a TV remote: the native controls cannot be reached with a D-pad.
+  function setUpTv(title) {
+    const SEEK_SECONDS = 10;
+    const OSD_MS = 4000;
+    // Key codes are what TV remotes send when they have no usable event.key.
+    const CODES = { 415: "play", 19: "pause", 179: "toggle", 10252: "toggle", 412: "back10", 417: "forward10", 413: "exit", 10009: "exit", 461: "exit" };
+    const KEYS = {
+      Enter: "toggle", " ": "toggle", MediaPlayPause: "toggle", MediaPlay: "play", MediaPause: "pause",
+      ArrowLeft: "back10", MediaRewind: "back10", ArrowRight: "forward10", MediaFastForward: "forward10",
+      ArrowUp: "qualityUp", ArrowDown: "qualityDown",
+      Escape: "exit", Backspace: "exit", GoBack: "exit", BrowserBack: "exit", MediaStop: "exit",
+    };
+    const ACTIONS = {
+      toggle: () => (video.paused ? video.play().catch(() => {}) : video.pause()),
+      play: () => video.play().catch(() => {}),
+      pause: () => video.pause(),
+      back10: () => seek(-SEEK_SECONDS),
+      forward10: () => seek(SEEK_SECONDS),
+      qualityUp: () => changeQuality(-1),
+      qualityDown: () => changeQuality(1),
+      exit: () => (history.length > 1 ? history.back() : location.assign("./")),
+    };
+    let hideTimer;
+
+    const clock = (s) => {
+      if (!Number.isFinite(s)) return "--:--";
+      const pad = (n) => String(Math.floor(n)).padStart(2, "0");
+      return (s >= 3600 ? Math.floor(s / 3600) + ":" : "") + pad((s % 3600) / 60) + ":" + pad(s % 60);
+    };
+    function draw() {
+      status("osd-time", clock(video.currentTime) + " / " + clock(video.duration));
+      status("osd-state", video.paused ? "Paused" : "Playing");
+      status("osd-quality", "Quality: " + quality.options[quality.selectedIndex].text);
+      document.getElementById("osd-fill").style.width = (video.duration ? (video.currentTime / video.duration) * 100 : 0) + "%";
+    }
+    // The controls stay up while paused, so that a stopped picture never looks like a frozen TV.
+    function showOsd() {
+      document.body.classList.remove("idle");
+      clearTimeout(hideTimer);
+      if (!video.paused) hideTimer = setTimeout(() => document.body.classList.add("idle"), OSD_MS);
+      draw();
+    }
+    function seek(delta) {
+      if (!Number.isFinite(video.duration)) return;
+      video.currentTime = Math.min(Math.max(video.currentTime + delta, 0), video.duration);
+    }
+    function changeQuality(delta) {
+      const next = quality.selectedIndex + delta;
+      if (quality.disabled || next < 0 || next >= quality.length) return;
+      quality.selectedIndex = next;
+      quality.onchange();
+    }
+
+    document.body.classList.add("tv");
+    document.title = title || document.title;
+    status("osd-title", title);
+    video.controls = false;
+    document.getElementById("osd-bottom").prepend(document.getElementById("msg"));
+    ["play", "pause", "seeked"].forEach((name) => video.addEventListener(name, showOsd));
+    ["timeupdate", "durationchange"].forEach((name) => video.addEventListener(name, draw));
+    document.getElementById("osd").addEventListener("click", () => { ACTIONS.toggle(); showOsd(); });
+    window.addEventListener("keydown", (e) => {
+      const action = ACTIONS[KEYS[e.key] || CODES[e.keyCode]];
+      if (!action) return;
+      e.preventDefault();
+      action();
+      showOsd();
+    });
+    showOsd();
+  }
 </script>
 </body>
 </html>

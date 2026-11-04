@@ -18,6 +18,9 @@ Client ──► FastAPI ──► PostgreSQL (metadata, job state)
 - **Web app** for PCs and phones on the media edge (React + shadcn/ui): list uploaded videos with their
   status and thumbnail, group them into folders, and upload by file picker, camera or drag and drop with upload and transcoding
   progress, then a link to the player.
+- **10-foot UI** for smart TVs: a lean-back library and full screen player driven by the D-pad and media keys of a
+  remote. It starts on its own on TV browsers it recognizes; `?tv=1` (or **TV mode** in the sidebar) turns it on
+  elsewhere and `?tv=0` turns it off. Uploading and organizing folders stay on PCs and phones.
 - **Validation** on upload completion: object exists, size matches, FFprobe confirms a real video
   stream, duration and resolution limits. Corrupt uploads are marked `invalid` and deleted.
 - **Transcoding** to H.264 (High/Main) + AAC-LC MP4 at 1080p/720p/480p/360p, preserving the display

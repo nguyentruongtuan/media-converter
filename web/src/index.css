@@ -128,3 +128,17 @@
     @apply font-sans;
     }
 }
+
+/* 10-foot UI. Sizes follow the screen width, so text is the same size on 720p, 1080p and 4K TVs. */
+@layer base {
+  html[data-tv] {
+    font-size: max(16px, 1.25vw);
+    scrollbar-width: none;
+  }
+}
+
+/* Outside any layer, to win over the outline-none of the shadcn/ui controls. */
+html[data-tv] :focus {
+  outline: 0.25rem solid var(--foreground);
+  outline-offset: 0.2rem;
+}

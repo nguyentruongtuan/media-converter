@@ -1,4 +1,4 @@
-import { Clapperboard, KeyRound, Library, Upload, type LucideIcon } from "lucide-react"
+import { Clapperboard, KeyRound, Library, Tv, Upload, type LucideIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -57,18 +57,24 @@ export function AppSidebar({ route, uploadBadge, onChangeKey }: Props) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      {onChangeKey && (
-        <SidebarFooter>
-          <SidebarMenu>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton render={<a href="?tv=1" />}>
+              <Tv />
+              <span>TV mode</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {onChangeKey && (
             <SidebarMenuItem>
               <SidebarMenuButton onClick={onChangeKey}>
                 <KeyRound />
                 <span>Change API key</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      )}
+          )}
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   )
 }
