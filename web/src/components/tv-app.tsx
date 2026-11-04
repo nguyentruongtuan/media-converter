@@ -112,12 +112,12 @@ function TvLibrary({ apiKey, onForgetKey }: { apiKey: string; onForgetKey: () =>
 
   return (
     <div className="flex flex-col gap-8 px-[5vw] py-[5vh]">
-      <header className="flex items-center justify-between gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-4 text-3xl font-semibold">
           <Clapperboard className="size-10" />
           Media Converter
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button className={cn(CONTROL, "bg-secondary")} onClick={onForgetKey}>
             <KeyRound />
             Change API key
@@ -143,7 +143,7 @@ function TvLibrary({ apiKey, onForgetKey }: { apiKey: string; onForgetKey: () =>
       </nav>
       {shownError && <p className="rounded-xl bg-destructive/20 p-6 text-xl break-words">{shownError}</p>}
       {!library && !error && (
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="aspect-video rounded-xl" />
           ))}
@@ -153,11 +153,11 @@ function TvLibrary({ apiKey, onForgetKey }: { apiKey: string; onForgetKey: () =>
         <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed p-16 text-center">
           <Film className="size-16 text-muted-foreground" />
           <p className="text-2xl">{folder === ALL_VIDEOS ? "No videos yet." : "No videos here."}</p>
-          <p className="text-xl text-muted-foreground">Upload from a phone or computer to watch here.</p>
+          <p className="text-xl text-muted-foreground">To upload, exit TV mode on a phone or computer.</p>
         </div>
       )}
       {library && total > 0 && (
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
           {library.videos.items.map((video) => (
             <VideoCard key={video.id} video={video} job={library.jobs[video.id]} />
           ))}
